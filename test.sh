@@ -45,7 +45,7 @@ cexec() { incus exec "$CONTAINER" -- bash -c "$1"; }
 echo ""
 echo "=== Post-setup verification ==="
 
-# --- Tool installation (9 checks) ---
+# --- Tool installation (10 checks) ---
 for tool in htop btop incus rustc cargo zellij hx harper-ls pyright ruff; do
     if cexec "export PATH=\"\$HOME/.cargo/bin:\$HOME/.local/bin:\$PATH\" && command -v $tool" &>/dev/null; then
         pass "$tool installed"

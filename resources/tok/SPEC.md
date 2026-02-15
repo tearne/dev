@@ -18,7 +18,7 @@ This command can be initialised with a secret (the *tok*en), which it encrypts a
 - The flag `--time` or `-t` allows the user to specify the time (seconds) before the clipboard will be cleared.
 
 ## Implementation
-- A minimal Python script (run via `uv`).
+- A minimal Python script (run via `uv`), following POS style.
 - Attempts to detect if the terminal is running on X11, Wayland, or Windows and chooses the appropriate system clipboard tool.
 - Uses a ubiquitous and well regarded encryption tool.
 - Is written in a style so that it would be easy to see how the secret can be decrypted manually on the command line.
