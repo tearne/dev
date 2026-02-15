@@ -13,6 +13,10 @@ import sys
 import time
 from pathlib import Path
 
+if not (os.environ.get("VIRTUAL_ENV") or os.environ.get("UV_INTERNAL__PARENT_INTERPRETER")):
+    print("Error: run this script via './tok.py' or bootstrap_inst.sh, not directly.")
+    sys.exit(1)
+
 TOK_DIR = Path(os.environ.get("TOK_DIR", Path.home() / ".local/share/tok"))
 TIMEOUT = 10
 

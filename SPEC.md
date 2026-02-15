@@ -32,7 +32,7 @@ No configuration for the `bootstrap_inst.sh` installer - everything hard coded, 
 ## Functional Requirements
 
 - Installation commands should clearly display the shell command that is currently running, along with a description such as "installing <tool>".  These messages should not be pushed off top of terminal.
-- Idempotency - if a tool installed, skip it, if a config exists do nothing, bu warn and summarise at the end of the run.
+- Idempotency - if a tool installed, skip it, if a config exists do nothing, but warn and summarise at the end of the run.
 - Minimal interaction once started - user starts it and goes to get coffee.
 - Error handling - fail fast, with breadcrumbs indicating on how far it got.
 - Prompts for user password once at start,  if required.
@@ -72,6 +72,8 @@ All latest stable versions
     - set `true-color`
     - set `autumn` theme
     - put a ruler at 80 chars
+    - set relative line numbers
+    - always show the bufferline
   - languages
     - set `soft-wrap` for markdown files
   - Configure `harper-ls` to use a British English dictionary

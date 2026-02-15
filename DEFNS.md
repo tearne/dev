@@ -27,7 +27,12 @@ POS guidance:
 ```
 - Rather than complex configuration, set the script up with key functions at the top of the file, so they can be easily commented out or used to jump to navigate.
 - Keep utility functions towards the bottom of the file.
-- Guard against being run directly (e.g. `python3 script.py`) instead of via `uv run`. Check for `VIRTUAL_ENV` or `:wUV_INTERNAL__PARENT_INTERPRETER` in the environment and exit with a helpful message if neither is set.
+- Guard against being run directly (e.g. `python3 script.py`) instead of via `uv run`. Check for `VIRTUAL_ENV` or `UV_INTERNAL__PARENT_INTERPRETER` in the environment and exit with a helpful message if neither is set. Use the pattern:
+    ```py
+    if not (os.environ.get("VIRTUAL_ENV") or os.environ.get("UV_INTERNAL__PARENT_INTERPRETER")):
+        print("Error: run this script via './<script>' or bootstrap_inst.sh, not directly.")
+        sys.exit(1)
+    ```
 - Try to keep to built-in Python libraries to maximise future compatibility.
 - Use:
     - `argparse`
