@@ -296,6 +296,8 @@ def run(cmd):
 def sudo(cmd):
     if os.geteuid() == 0:
         run(cmd)
+    elif _password is None:
+        run(f"sudo {cmd}")
     else:
         log(f"\033[2m$ {cmd}\033[0m")
         full = f"sudo -S {cmd}"

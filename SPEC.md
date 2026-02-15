@@ -35,7 +35,7 @@ No configuration for the `bootstrap_inst.sh` installer - everything hard coded, 
 - Idempotency - if a tool installed, skip it, if a config exists do nothing, but warn and summarise at the end of the run.
 - Minimal interaction once started - user starts it and goes to get coffee.
 - Error handling - fail fast, with breadcrumbs indicating on how far it got.
-- Prompts for user password once at start,  if required.
+- Prompts for user password once at start, if required. Skips the prompt when running as root or when sudo credentials are already cached (passwordless sudo).
 - Wherever possible, the tool will install its own dependencies at runtime (e.g. `uv`, `curl`).
 - When installing assets, copy from a relative rather than an absolute path.
 
