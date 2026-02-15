@@ -7,117 +7,89 @@ This project contains items to help set up a development environment on Ubuntu/D
 - config files to install
 - helper scripts (e.g. a tool to hold encrypted tokens)
 
-
 ## Usage
 
 - Run one command sets everything up:
   - `bootstrap_inst.sh` if system doesn't have `uv` installed already
   - otherwise `install.py` can be used directly.
 
+## Behaviour
 
+### Installation Process
+- After an optional initial password prompt, no further user input is required.
+- Prompts for sudo password once at start. Skips the prompt when running as root or when sudo credentials are already cached (passwordless sudo).
+- If a tool is already installed, it is skipped.
+- On failure, exits immediately. The last log line identifies the failed command and its exit code.
+- Each installation step displays the shell command being run, without scrolling previous output off screen.
+- Installs its own dependencies at runtime where possible (e.g. `uv`, `curl`).
 
+### Tools Installed
+All latest stable versions:
+- `uv`
+- Rust (`rustc`, `cargo`, `rust-analyzer`)
+- Helix editor (`hx`) with language servers: `harper-ls`, `pyright`, `ruff`
+- Zellij (`zellij`)
+- `htop`, `btop`, `incus`
 
-## Dependencies
+### Incus
+- Incus is initialised (`incus admin init`) with ZFS storage backend.
+- Falls back to `dir` backend when ZFS is not installed.
 
-- `uv` will ensure Python is used at runtime.
-- Python 3.12
+### Scripts
+- `tok` installed in `~/.local/bin/` (see `resources/tok/SPEC.md`)
 
+### Configuration
+- `~/.local/bin/` is on the user's `PATH` in new terminals.
+- Config files are symlinked (relative paths) from the resources folder, so the project can be checked out anywhere.
+- Dangling symlinks are replaced silently.
+- Existing config files are never overwritten. If the installable config differs (ignoring whitespace), a warning is recorded and displayed at the end of the run with a diff.
+- Helix config includes:
+  - `true-color` enabled
+  - `autumn` theme
+  - Ruler at column 80
+  - Relative line numbers
+  - Bufferline always shown
+  - Soft-wrap for markdown files
+  - `harper-ls` configured with British English dictionary
+  - Language server config for installed LSPs
 
+### Logging
+- Structured/hierarchical log output showing current stage/sub-stage and process output.
+- An install log file records all commands and their full output. Overwritten on each run.
 
-## Configuration
+## Constraints
 
-No configuration for the `bootstrap_inst.sh` installer - everything hard coded, following the POS style.
-
-
-## Functional Requirements
-
-- Installation commands should clearly display the shell command that is currently running, along with a description such as "installing <tool>".  These messages should not be pushed off top of terminal.
-- Idempotency - if a tool installed, skip it, if a config exists do nothing, but warn and summarise at the end of the run.
-- Minimal interaction once started - user starts it and goes to get coffee.
-- Error handling - fail fast, with breadcrumbs indicating on how far it got.
-- Prompts for user password once at start, if required. Skips the prompt when running as root or when sudo credentials are already cached (passwordless sudo).
-- Wherever possible, the tool will install its own dependencies at runtime (e.g. `uv`, `curl`).
-- When installing assets, copy from a relative rather than an absolute path.
-
-### Third-party tools to install
-All latest stable versions
-- `uv` (via `curl`) - bootstrapped via outer BASH script or manually by user.
-- Rust, including
-  - Cargo and rust analyzer (via RustUp (via `curl`)) for Helix
-- Helix editor (download latest stable deb from GitHub), including language servers:
-  - `harper-ls` (via `cargo binstall`)
-  - `pyright` (via `uv`)
-  - `ruff` (via `uv`)
-- Zellij (via `cargo binstall`)
-- `htop`, `btop` and `incus` (installed non-interactively via apt repos - no PPA)
-- Incus initialisation (`incus admin init`) with ZFS storage backend.  Falls back to `dir` backend when ZFS is not installed.
-
-### Scripts / Aliases to Install
-- `tok` (see `resources`) to be installed in `.local/bin`
-
-### Configuration to Set Up
-
-#### General
-- When installing a config, soft link it from the resources folder. Perform the linking operation using a relative path so it doesn't matter where the project has been checked out.
-- If a symlink is dangling (target no longer exists), replace it silently.
-- If config file exists, don't overwrite it. Perform a diff to determine if there is a non-whitespace difference between the existing and installable config and then:
-  - Warn the user if the installable config is different and they can delete the current config and rerun if they want to overwrite.
-  - Record the warning so all warnings can be summarised at the end
-  - When displaying config warnings at the end of the run, show a diff
-
-#### Specific
-- Ensure that `.local/bin/` is on the users path.
-- Add Helix config (via soft link to a local resources directory if possible):
-  - config
-    - set `true-color`
-    - set `autumn` theme
-    - put a ruler at 80 chars
-    - set relative line numbers
-    - always show the bufferline
-  - languages
-    - set `soft-wrap` for markdown files
-  - Configure `harper-ls` to use a British English dictionary
-  - Add a language server config if required to make use of the installed lsps
-
-
-
-## Non-Functional Requirements
-
-- Use POS style.
-- Root structure to include these key files:
+- POS style (see `DEFNS.md`).
+- Python 3.12, `uv` as runtime.
+- No flags or configuration — to customise, edit `install.py` directly.
+- `uv` bootstrapped via `curl`.
+- Rust installed via RustUp (via `curl`).
+- Helix installed from latest stable `.deb` on GitHub releases.
+- `harper-ls` and Zellij installed via `cargo binstall`.
+- `pyright` and `ruff` installed via `uv`.
+- `htop`, `btop`, `incus` installed non-interactively via apt (no PPA).
+- Root structure:
 ```
 <project root>/
 ├── resources/  # Config files to be soft linked during installation
-├── bootstrap_inst.sh  # Bash entry point, bootstraps `uv`
+├── bootstrap_inst.sh  # Bash entry point, bootstraps uv
 ├── install.py         # Python logic (uv single-file script)
 ├── test.sh     # Incus test harness
 ```
 
+## Verification
 
-
-## Testing
-
-- Testing where possible without compromising the simplicity of the code.
-- Testing can be undertaken within an `incus` container where relevant.
-- Use the latest LTS Ubuntu for testing.
+- Tests run within an `incus` container (latest LTS Ubuntu).
+- Test where possible but avoid disproportionate complexity or polluting external API.
 
 ### Test Scenarios
+- Installation completes without error.
+- Each tool is callable: `htop`, `btop`, `incus`, `rustc`, `cargo`, `zellij`, `hx`, `harper-ls`, `pyright`, `ruff`.
+- Config symlinks point to the expected relative targets.
+- Config file content matches spec (e.g. `theme = "autumn"`, `dialect = "British"`).
+- New terminals have `~/.local/bin` on `PATH`.
+- Existing configs are not overwritten; warnings are shown at end.
 
-- Test the overall installation process completes without error
-- Verify each tool is callable after setup (`htop`, `btop`, `incus`, `rustc`, `cargo`, `zellij`, `hx`, `harper-ls`, `pyright`, `ruff`)
-- Verify config symlinks point to the expected relative targets
-- Verify config file content (`theme = "autumn"`, `dialect = "British"`)
-- Check that new terminals get `.local/bin` on their path
-- Test existing configs are not overwritten. Warn that they will not be overwritten and move on.
-
-### Logging / Output
-
-- Use a structured/hierarchical log output format, which reveals which stage/sub-stage we're at, as well as output from any processes being run.
-- Create an install log file containing the commands that were run and their full output, to compensate for the single-line console display during the run. The log is overwritten on each run.
-
-
-
-## Non-Goals
-
-- No flags and config - just edit install.py
-
+### Not Tested
+- Sudo password prompt behaviour (requires interactive terminal).
+- Incus ZFS vs dir fallback (depends on host storage setup).

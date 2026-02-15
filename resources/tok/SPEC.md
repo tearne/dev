@@ -1,7 +1,7 @@
 # Specification: `tok` Script
 
 ## Overview
-This command can be initialised with a secret (the *tok*en), which it encrypts against a supplied passphrase and stores on disk. When requested it prompts for the passphrase, decrypts the secret and copies it to the system clipboard (e.g. using `xclip` or `wl-copy`). After that it doesn't exit, but waits for a default of 10 seconds before overwriting the clipboard.
+This command can be initialised with a secret (the *tok*en), which it encrypts against a supplied passphrase and stores on disk. When requested it prompts for the passphrase, decrypts the secret and copies it to the system clipboard via OSC 52 (a terminal escape sequence supported by most modern terminals). After that it doesn't exit, but waits for a default of 10 seconds before clearing the clipboard.
 
 ## Usage
 - `tok --add` or `tok -a`
@@ -11,24 +11,26 @@ This command can be initialised with a secret (the *tok*en), which it encrypts a
 - `tok`
 	- Requests the default secret, or if one doesn't exist, prints help
 	- Prompts for the passphrase for the default secret
-- 'tok <secret name>'
-	- As with 'tok' but for a given secret name
-- 'tok --list' or 'tok -l'
+- `tok <secret name>`
+	- As with `tok` but for a given secret name
+- `tok --list` or `tok -l`
 	- Lists all available secrets
 - The flag `--time` or `-t` allows the user to specify the time (seconds) before the clipboard will be cleared.
 
-## Implementation
-- A minimal Python script (run via `uv`), following POS style.
-- Attempts to detect if the terminal is running on X11, Wayland, or Windows and chooses the appropriate system clipboard tool.
-- Uses a ubiquitous and well regarded encryption tool.
-- Is written in a style so that it would be easy to see how the secret can be decrypted manually on the command line.
-- Passphrases must not appear in the process argument list (i.e. avoid `-pass pass:<passphrase>`). Use `-pass stdin` to pipe the passphrase via stdin instead, keeping it out of `/proc/*/cmdline`.
-- Rather than implement a method to manage the encrypted secrets within `tok`, they are stored as individual `.enc` files in `~/.local/share/tok/` and can be manually renamed, added to, or deleted. This means the encrypted files on disk need to indicate the name of the secret they relate to (e.g. `default`).
-- Supports a `--stdout` flag that outputs the decrypted secret to stdout instead of the clipboard (skips the clipboard-clear timer). Enables automated testing and piping.
+## Behaviour
+- Copies to the system clipboard using OSC 52 escape sequences. Works over SSH, through terminal multiplexers (e.g. Zellij), and on any OS — no clipboard tools required on the remote host.
+- Clears the clipboard after the timeout by writing an empty OSC 52 sequence.
+- Secrets are stored as individual `.enc` files in `~/.local/share/tok/`. Files can be manually renamed, added to, or deleted.
+- `--stdout` outputs the decrypted secret to stdout instead of the clipboard, skipping the clipboard-clear timer.
 - If interrupted (SIGINT, SIGTERM, SIGHUP) while waiting to clear the clipboard, clears it immediately before exiting.
-- When stdin is not a terminal (e.g. secret piped from a file), the passphrase is read from `/dev/tty` so it can still be entered interactively. Falls back to stdin when `/dev/tty` is unavailable (e.g. automated testing), with a warning that input may be echoed.
+- When stdin is not a terminal (e.g. secret piped from a file), the passphrase is still prompted interactively (via `/dev/tty`). Falls back to stdin when `/dev/tty` is unavailable (e.g. automated testing), with a warning that input may be echoed.
 
-## Testing
+## Constraints
+- Passphrases must not appear in the process argument list (i.e. avoid `-pass pass:<passphrase>`). Use `-pass stdin` to pipe the passphrase via stdin instead, keeping it out of `/proc/*/cmdline`.
+- POS style (see `DEFNS.md`).
+- Uses `openssl enc` for encryption — chosen so the user can see how to decrypt manually on the command line.
+
+## Verification
 
 - Tests run directly (no container needed — `tok` has no system-level side effects).
 
@@ -38,9 +40,7 @@ This command can be initialised with a secret (the *tok*en), which it encrypts a
 - Listing: `--list` shows all stored secret names.
 - Wrong passphrase: decryption fails with a clear error.
 - Missing secret: requesting a non-existent name fails with a clear error.
-- Signal cleanup: clipboard is cleared when tok is terminated during the wait period (tested with a fake xclip).
+- Signal cleanup: clipboard is cleared when tok is terminated during the wait period.
 
 ### Not tested
-- Clipboard copy and clear behaviour (requires display server).
-- Clipboard tool detection (X11/Wayland/Windows).
 - Passphrase prompt when stdin is piped (requires `/dev/tty`).
