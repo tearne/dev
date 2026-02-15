@@ -88,8 +88,9 @@ def main():
 
     # --- Add ---
     if args.add:
-        sys.stderr.write("Enter secret: ")
-        sys.stderr.flush()
+        if sys.stdin.isatty():
+            sys.stderr.write("Enter secret: ")
+            sys.stderr.flush()
         secret = sys.stdin.readline().rstrip("\n")
 
         passphrase = read_passphrase("Enter passphrase: ")
