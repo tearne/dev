@@ -45,7 +45,7 @@ def clipboard_clear(tty):
     _osc52_write("", tty)
 
 
-def read_passphrase(prompt):
+def read_hidden(prompt):
     """getpass from /dev/tty (works even when stdin is piped); falls back to stdin."""
     try:
         return getpass.getpass(prompt, stream=sys.stderr)
@@ -65,7 +65,7 @@ def main():
         description="Encrypt and retrieve secrets via the clipboard.",
         epilog="Secrets are stored in ~/.local/share/tok/",
     )
-    parser.add_argument("--add", "-a", action="store_true", help="add a new secret")
+    parser.add_argument("--add", "-a", action="store_true", help="interactively add a new secret and passphrase")
     parser.add_argument("--list", "-l", action="store_true", help="list stored secrets")
     parser.add_argument("--stdout", action="store_true",
                         help="output secret to stdout instead of clipboard")
@@ -78,13 +78,10 @@ def main():
 
     # --- Add ---
     if args.add:
-        if sys.stdin.isatty():
-            sys.stderr.write("Enter secret: ")
-            sys.stderr.flush()
-        secret = sys.stdin.readline().rstrip("\n")
+        secret = read_hidden("Enter secret (input hidden): ")
 
-        passphrase = read_passphrase("Enter passphrase: ")
-        confirm = read_passphrase("Confirm passphrase: ")
+        passphrase = read_hidden("Enter passphrase: ")
+        confirm = read_hidden("Confirm passphrase: ")
 
         if passphrase != confirm:
             sys.stderr.write("Error: passphrases do not match.\n")
@@ -124,7 +121,7 @@ def main():
             sys.stderr.write(f"Error: secret '{name}' not found.\n")
         sys.exit(1)
 
-    passphrase = read_passphrase("Passphrase: ")
+    passphrase = read_hidden("Passphrase: ")
 
     # openssl enc -aes-256-cbc -pbkdf2 -d -pass stdin -in <file>
     result = subprocess.run(

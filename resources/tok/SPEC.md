@@ -5,7 +5,7 @@ This command can be initialised with a secret (the *tok*en), which it encrypts a
 
 ## Usage
 - `tok --add` or `tok -a`
-	- Adds a new secret, prompting for the secret to be pasted in, then the passphrase
+	- Interactively adds a new secret and passphrase
 	- The first secret is known as the 'default' secret
 	- For any subsequent secrets it asks for a single word name
 - `tok`
@@ -23,6 +23,7 @@ This command can be initialised with a secret (the *tok*en), which it encrypts a
 - Secrets are stored as individual `.enc` files in `~/.local/share/tok/`. Files can be manually renamed, added to, or deleted.
 - `--stdout` outputs the decrypted secret to stdout instead of the clipboard, skipping the clipboard-clear timer.
 - If interrupted (SIGINT, SIGTERM, SIGHUP) while waiting to clear the clipboard, clears it immediately before exiting.
+- Interactive secret and passphrase input is not echoed to the terminal. The secret prompt reassures the user that their input will not be visible.
 - When stdin is not a terminal (e.g. secret piped from a file), the passphrase is still prompted interactively (via `/dev/tty`). Falls back to stdin when `/dev/tty` is unavailable (e.g. automated testing), with a warning that input may be echoed.
 
 ## Constraints
