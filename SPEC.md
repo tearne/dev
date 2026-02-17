@@ -59,7 +59,7 @@ All latest stable versions:
 
 ## Constraints
 
-- POS style (see `DEFNS.md`).
+- POS style (see `DEFINITIONS.md`).
 - Python 3.12, `uv` as runtime.
 - No flags or configuration — to customise, edit `install.py` directly.
 - `uv` bootstrapped via `curl`.

@@ -1,10 +1,10 @@
 # AGENTS Guidelines
 
-- Read definitions and terminology in `DEFNS.md`
+- Read definitions and terminology in `DEFINITIONS.md`
 - Specifications live in `SPEC.md` files:
   - The **root** `SPEC.md` covers the project as a whole (structure, shared requirements, integration testing).
   - **Subfolder** `SPEC.md` files (e.g. `resources/tok/SPEC.md`) are scoped to that component — they own their own usage, implementation, and test definitions.
-  - Subfolder specs inherit project-wide non-functional requirements (e.g. definitions in `DEFNS.md`) unless they explicitly override them.
+  - Subfolder specs inherit project-wide non-functional requirements (e.g. definitions in `DEFINITIONS.md`) unless they explicitly override them.
   - When assessing drift or planning changes, read **all** `SPEC.md` files, not just the root.
 
 ## Change Management Process

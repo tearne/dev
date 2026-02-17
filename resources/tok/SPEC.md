@@ -28,7 +28,7 @@ This command can be initialised with a secret (the *tok*en), which it encrypts a
 
 ## Constraints
 - Passphrases must not appear in the process argument list (i.e. avoid `-pass pass:<passphrase>`). Use `-pass stdin` to pipe the passphrase via stdin instead, keeping it out of `/proc/*/cmdline`.
-- POS style (see `DEFNS.md`).
+- POS style (see `DEFINITIONS.md`).
 - Uses `openssl enc` for encryption — chosen so the user can see how to decrypt manually on the command line.
 
 ## Verification
