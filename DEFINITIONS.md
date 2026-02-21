@@ -73,15 +73,17 @@ Create a `design.md` in the same change folder as the proposal. This captures th
 
 ```markdown
 # Design: <Change Name>
+**Status: Draft | Ready for Review | Approved**
 
 ## Approach
 Technical explanation of how the change will be implemented,
 referencing relevant code, libraries, and patterns.
 
 ## Tasks
-1. <implementation task>
-2. <implementation task>
-3. Run tests / verify
+- [ ] <implementation task>
+- [ ] <implementation task>
+- [ ] Run tests / verify
+- [ ] Confirm implementation complete and ready to archive
 ```
 
 Where the task list includes tests, they should be listed as separate tasks and, where possible, written before the code they verify (TDD style).
@@ -89,7 +91,7 @@ Where the task list includes tests, they should be listed as separate tasks and,
 The design must be reviewed and approved before implementation begins.
 
 ### 3. Implement
-Work through the task list one item at a time. Pause after each task and invite the operator to review before proceeding to the next. Do not modify `SPEC.md` during this phase.
+Work through the task list one item at a time. Check off each task in `design.md` as it is completed. Pause after each task and invite the operator to review before proceeding to the next. Do not modify `SPEC.md` during this phase.
 
 ### 4. Archive
 Apply the proposal delta to the `SPEC.md` alongside the `changes/` directory. Move the change folder to `changes/archive/YYYY-MM-DD-<change-name>/`.
