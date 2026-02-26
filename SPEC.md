@@ -16,7 +16,7 @@ This project contains items to help set up a development environment on Ubuntu/D
 ## Behaviour
 
 ### Installation Process
-- Before installation begins, a full-screen interactive menu is presented listing all installable items, all selected by default. The user may deselect items before confirming.
+- Before installation begins, a full-screen interactive menu is presented listing all installable items, all selected by default. The user may deselect items before confirming with Enter.
 - Passing `--all`, `--only <item> [...]`, or `--skip <item> [...]` bypasses the menu for non-interactive use. Items may be specified by full id or short name. If no flag is given and stdin is not a TTY, the script exits with an error directing the user to rerun with one of the three flags.
 - `-l`/`--list` prints a plain-text table of all installable items (id, short name, description) and exits without installing anything.
 - Prompts for sudo password once at start. Skips the prompt when running as root or when sudo credentials are already cached (passwordless sudo).

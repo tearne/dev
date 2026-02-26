@@ -320,7 +320,7 @@ def run_selection_menu(items: list[InstallItem]) -> set[str] | None:
     """
     from textual.app import App, ComposeResult
     from textual.binding import Binding
-    from textual.widgets import Footer, Header, SelectionList
+    from textual.widgets import Footer, Header, SelectionList, Static
     from textual.widgets.selection_list import Selection
 
     all_ids = [item.id for item in items]
@@ -337,7 +337,7 @@ def run_selection_menu(items: list[InstallItem]) -> set[str] | None:
 
     class InstallerApp(App):
         BINDINGS = [
-            Binding("enter",  "confirm",      "Install",  show=True),
+            Binding("enter",  "confirm",      "Install",  show=True,  priority=True),
             Binding("q",      "quit_abort",   "Quit",     show=True),
             Binding("escape", "quit_abort",   "Quit",     show=False),
             Binding("j",      "cursor_down",  "Down",     show=False),
@@ -347,7 +347,8 @@ def run_selection_menu(items: list[InstallItem]) -> set[str] | None:
         ]
         CSS = """
         SelectionList { height: 1fr; border: solid $accent; }
-        Header { height: 3; }
+        Header { height: 1; }
+        #hints { padding: 0 1; color: $text-muted; }
         """
 
         def __init__(self):
@@ -360,11 +361,11 @@ def run_selection_menu(items: list[InstallItem]) -> set[str] | None:
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
             yield SelectionList(*_make_selections(), id="menu")
+            yield Static("space/click toggle  ↑↓/jk navigate  enter install  q quit", id="hints")
             yield Footer()
 
         def on_mount(self) -> None:
-            self.title = "Dev Environment Setup — select items to install"
-            self.sub_title = "space/click toggle  ↑↓/jk navigate  enter install  q quit"
+            self.title = "Dev Environment Setup"
 
         def on_selection_list_selection_toggled(
             self, event: SelectionList.SelectionToggled
