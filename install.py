@@ -157,7 +157,7 @@ def init_incus():
 
     with task(f"incus init ({backend})"):
         sudo("systemctl start incus.service")
-        if subprocess.run("incus storage show default", shell=True, capture_output=True).returncode == 0:
+        if sudo_ok("incus storage show default"):
             log("already initialized, skipping")
             return
         sudo(f"incus admin init --auto --storage-backend={backend}")
@@ -496,6 +496,26 @@ def run(cmd):
     if proc.returncode != 0:
         log(f"FAILED (exit {proc.returncode}): {cmd}")
         sys.exit(1)
+
+
+def sudo_ok(cmd) -> bool:
+    """Run a command with sudo privileges; return True if it exits 0, False otherwise."""
+    if os.geteuid() == 0:
+        full = cmd
+    elif _password is None:
+        full = f"sudo {cmd}"
+    else:
+        full = f"sudo -S {cmd}"
+    proc = subprocess.Popen(
+        full, shell=True, text=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    if _password is not None and os.geteuid() != 0:
+        proc.stdin.write(_password + "\n")
+    proc.stdin.close()
+    proc.wait()
+    return proc.returncode == 0
 
 
 def sudo(cmd):

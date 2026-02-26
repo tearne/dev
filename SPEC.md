@@ -44,6 +44,7 @@ Item interdependencies:
 ### Incus
 - Incus is initialised (`incus admin init`) with ZFS storage backend.
 - Falls back to `dir` backend when ZFS is not installed.
+- The already-initialised check runs with sudo, so it works correctly for users not in the `incus-admin` group.
 
 ### Scripts
 - `tok` installed in `~/.local/bin/` (see `resources/tok/SPEC.md`)
