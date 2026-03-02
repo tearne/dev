@@ -366,6 +366,23 @@ def test_collect_ancestors_deeply_nested():
 
 
 # ---------------------------------------------------------------------------
+# install_rust PATH update
+# ---------------------------------------------------------------------------
+
+def test_install_rust_updates_path_when_already_installed(tmp_path, monkeypatch):
+    # Simulate rust already installed; subprocess calls are no-ops
+    monkeypatch.setattr(install, "is_installed", lambda cmd: True)
+    monkeypatch.setattr(install, "sudo", lambda cmd: None)
+    monkeypatch.setattr(install, "run", lambda cmd: None)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")  # cargo bin absent
+
+    install.install_rust()
+
+    cargo_bin = str(tmp_path / ".cargo" / "bin")
+    assert cargo_bin in os.environ["PATH"]
+
+
+# ---------------------------------------------------------------------------
 # setup_local_bin_path
 # ---------------------------------------------------------------------------
 

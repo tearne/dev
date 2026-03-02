@@ -105,6 +105,7 @@ Item interdependencies:
   - **GitHub releases**: `helix` (latest stable `.deb`); `biome`
     (arch-appropriate binary → `~/.local/bin/`)
   - **`uv tool install`**: `pyright`, `ruff`
+- `install_rust()` unconditionally adds `~/.cargo/bin` to the process PATH, regardless of whether rust was already installed, so that subsequent installer steps can invoke `cargo` within the same run.
 - Git configured via `git config --global` for `delta` (`alias.dd`,
   `alias.dl`) and `difft` (`difftool.difftastic.cmd` using
   `$HOME/.cargo/bin/difft` to avoid PATH issues, `difftool.prompt`,

@@ -199,13 +199,15 @@ def install_rust():
         sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential")
         log("done")
 
+    cargo_bin = Path.home() / ".cargo" / "bin"
+    if str(cargo_bin) not in os.environ["PATH"]:
+        os.environ["PATH"] = str(cargo_bin) + ":" + os.environ["PATH"]
+
     with task("Rust"):
         if is_installed("rustc"):
             log("already installed, skipping")
             return
         run("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y")
-        cargo_bin = Path.home() / ".cargo" / "bin"
-        os.environ["PATH"] = str(cargo_bin) + ":" + os.environ["PATH"]
         log("done")
 
 
