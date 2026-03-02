@@ -61,6 +61,26 @@ Item interdependencies:
 - For non-interactive invocations (`--all`/`--only`/`--skip`), auto-resolved dependencies emit a warning to stdout and the log.
 - `zellij`, `delta`, `difft`, `harper-ls`, and `markdown-oxide` require `cargo-binstall`; `rust-analyzer` and `cargo-binstall` require `rust`; `all-upgrades` requires `unattended-upgrades`.
 
+### Installation Order
+
+Items are installed in the following logical stages. Within stage 5, no fixed relative
+order is required.
+
+1. **apt update** — always runs first so package metadata is current.
+2. **build-essential** (apt) — installed by `install_rust()` as a rust build
+   dependency; runs before rustup so the C linker is present when the Rust toolchain
+   links binaries.
+3. **rust** (rustup/rustc/cargo) — must precede `cargo-binstall` and `rust-analyzer`,
+   which depend on it. `install_rust()` also adds `~/.cargo/bin` to the process PATH.
+4. **cargo-binstall** — must precede all items installed via `cargo binstall`
+   (`zellij`, `delta`, `difft`, `harper-ls`, `markdown-oxide`).
+5. **Remaining items** — no fixed relative order required among themselves.
+
+Stages 2–4 are enforced at runtime by `ensure_cargo_binstall()`, which calls
+`install_rust()` before checking or installing `cargo-binstall`. All binstall-consuming
+installers go through `ensure_cargo_binstall()`, so the correct order is guaranteed
+regardless of the position of items in `_items()`.
+
 ### Incus
 - Incus is initialised (`incus admin init`) with ZFS storage backend.
 - Falls back to `dir` backend when ZFS is not installed.
@@ -105,7 +125,7 @@ Item interdependencies:
   - **GitHub releases**: `helix` (latest stable `.deb`); `biome`
     (arch-appropriate binary → `~/.local/bin/`)
   - **`uv tool install`**: `pyright`, `ruff`
-- `install_rust()` unconditionally adds `~/.cargo/bin` to the process PATH, regardless of whether rust was already installed, so that subsequent installer steps can invoke `cargo` within the same run.
+- `install_rust()` unconditionally adds `~/.cargo/bin` to the process PATH, regardless of whether rust was already installed. `ensure_cargo_binstall()` calls `install_rust()` before checking or installing `cargo-binstall`, making it the primary enforcement point that guarantees `cargo` is on PATH before any `cargo binstall` invocation.
 - Git configured via `git config --global` for `delta` (`alias.dd`,
   `alias.dl`) and `difft` (`difftool.difftastic.cmd` using
   `$HOME/.cargo/bin/difft` to avoid PATH issues, `difftool.prompt`,

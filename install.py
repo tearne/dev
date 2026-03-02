@@ -230,6 +230,7 @@ def install_cargo_binstall():
 
 
 def ensure_cargo_binstall():
+    install_rust()  # ensure cargo is on PATH before any binstall operation
     if is_installed("cargo-binstall"):
         return
     install_cargo_binstall()
