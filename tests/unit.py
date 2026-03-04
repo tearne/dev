@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = "==3.12.*"
+# dependencies = ["pytest", "rich"]
+# ///
 """Unit tests for install.py — file-operation logic only. No container required."""
 
 import os
@@ -86,36 +91,84 @@ def test_helix_config_skips_equivalent_real_file(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# install_tok
+# install_external_script
 # ---------------------------------------------------------------------------
 
-def test_install_tok_creates_symlink(tmp_path):
-    install.install_tok()
+def _make_cache(tmp_path, name, sha):
+    """Create a pre-populated cache directory simulating a fetched external script."""
+    cache_dir = tmp_path / ".local" / "share" / "dev-installer" / "external" / name / sha
+    cache_dir.mkdir(parents=True)
+    script = cache_dir / f"{name}.py"
+    script.write_text("#!/usr/bin/env python3\n")
+    script.chmod(0o755)
+    return cache_dir
+
+
+def _stub_git_sha(monkeypatch, sha):
+    """Make subprocess.run return the given sha for git rev-parse HEAD calls."""
+    import subprocess as sp
+    real_run = sp.run
+    def fake_run(cmd, **kwargs):
+        if "rev-parse" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout=sha + "\n", stderr="")
+        return real_run(cmd, **kwargs)
+    monkeypatch.setattr(sp, "run", fake_run)
+
+
+SHA = "a" * 40
+
+
+def test_external_script_creates_symlink(tmp_path, monkeypatch):
+    _make_cache(tmp_path, "tok", SHA)
+    _stub_git_sha(monkeypatch, SHA)
+    install.install_external_script("https://example.com/tok.git", SHA, "tok.py", "tok")
     dst = tmp_path / ".local" / "bin" / "tok"
     assert dst.is_symlink() and dst.exists()
 
 
-def test_install_tok_skips_correct_symlink(tmp_path):
-    install.install_tok()
-    install.install_tok()  # second call — already correct
+def test_external_script_skips_fetch_when_cache_exists(tmp_path, monkeypatch):
+    _make_cache(tmp_path, "tok", SHA)
+    _stub_git_sha(monkeypatch, SHA)
+    run_calls = []
+    monkeypatch.setattr(install, "run", lambda cmd: run_calls.append(cmd))
+    install.install_external_script("https://example.com/tok.git", SHA, "tok.py", "tok")
+    assert not any("fetch" in c for c in run_calls)
+
+
+def test_external_script_skips_correct_symlink(tmp_path, monkeypatch):
+    _make_cache(tmp_path, "tok", SHA)
+    _stub_git_sha(monkeypatch, SHA)
+    install.install_external_script("https://example.com/tok.git", SHA, "tok.py", "tok")
+    install.install_external_script("https://example.com/tok.git", SHA, "tok.py", "tok")
     assert len(install._warnings) == 0
 
 
-def test_install_tok_replaces_dangling_symlink(tmp_path):
+def test_external_script_replaces_dangling_symlink(tmp_path, monkeypatch):
+    _make_cache(tmp_path, "tok", SHA)
+    _stub_git_sha(monkeypatch, SHA)
     dst = tmp_path / ".local" / "bin" / "tok"
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.symlink_to("/nonexistent/tok")
-    install.install_tok()
+    install.install_external_script("https://example.com/tok.git", SHA, "tok.py", "tok")
     assert dst.is_symlink() and dst.exists()
 
 
-def test_install_tok_does_not_overwrite_real_file(tmp_path):
+def test_external_script_does_not_overwrite_real_file(tmp_path, monkeypatch):
+    _make_cache(tmp_path, "tok", SHA)
+    _stub_git_sha(monkeypatch, SHA)
     dst = tmp_path / ".local" / "bin" / "tok"
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text("existing content")
-    install.install_tok()
+    install.install_external_script("https://example.com/tok.git", SHA, "tok.py", "tok")
     assert dst.read_text() == "existing content"
     assert len(install._warnings) == 1
+
+
+def test_external_script_aborts_on_sha_mismatch(tmp_path, monkeypatch):
+    _make_cache(tmp_path, "tok", SHA)
+    _stub_git_sha(monkeypatch, "b" * 40)  # wrong SHA returned by git
+    with pytest.raises(SystemExit):
+        install.install_external_script("https://example.com/tok.git", SHA, "tok.py", "tok")
 
 
 # ---------------------------------------------------------------------------
@@ -399,3 +452,8 @@ def test_setup_local_bin_path_skips_if_already_present(tmp_path):
     install.setup_local_bin_path()
     content_after_second = (tmp_path / ".profile").read_text()
     assert content_after_first == content_after_second
+
+
+if __name__ == "__main__":
+    if "pytest" not in sys.modules or "pytest.pytest_source" not in dir():
+        sys.exit(pytest.main([__file__, "-v"]))

@@ -38,6 +38,7 @@ class InstallItem:
     installer: Callable
     parent: str | None = None  # group name or item id; None = top-level
     requires: list[str] = field(default_factory=list)
+    external: bool = False
 
 
 def _groups() -> list[Group]:
@@ -50,6 +51,28 @@ def _groups() -> list[Group]:
     ]
 
 
+def _load_external_items() -> list[InstallItem]:
+    import tomllib
+    registry = SCRIPT_DIR / "external_scripts.toml"
+    if not registry.exists():
+        return []
+    with registry.open("rb") as f:
+        data = tomllib.load(f)
+    items = []
+    for entry in data.get("script", []):
+        url        = entry["url"]
+        sha        = entry["sha"]
+        entrypoint = entry["entrypoint"]
+        name       = entry.get("rename") or Path(entrypoint).stem
+        items.append(InstallItem(
+            id=name,
+            installer=lambda u=url, s=sha, e=entrypoint, n=name: install_external_script(u, s, e, n),
+            parent="System",
+            external=True,
+        ))
+    return items
+
+
 def _items() -> list[InstallItem]:
     return [
         # System
@@ -58,7 +81,6 @@ def _items() -> list[InstallItem]:
         InstallItem("unattended-upgrades", install_unattended_upgrades, parent="System"),
         InstallItem("all-upgrades",        install_all_upgrades,        parent="unattended-upgrades", requires=["unattended-upgrades"]),
         InstallItem("incus",               install_incus_and_init,      parent="System"),
-        InstallItem("tok",                 install_tok,                 parent="System"),
         InstallItem("zellij",              install_zellij,              parent="System",  requires=["cargo-binstall"]),
         # Rust
         InstallItem("rust",                install_rust,                parent="Rust"),
@@ -74,7 +96,7 @@ def _items() -> list[InstallItem]:
         InstallItem("markdown-oxide",      install_markdown_oxide,      parent="helix",   requires=["cargo-binstall"]),
         InstallItem("pyright",             install_pyright,             parent="helix"),
         InstallItem("ruff",                install_ruff,                parent="helix"),
-    ]
+    ] + _load_external_items()
 
 
 # ---------------------------------------------------------------------------
@@ -389,10 +411,28 @@ def setup_local_bin_path():
         log(f"appended to {profile}")
 
 
-def install_tok():
-    with task("tok"):
-        src = SCRIPT_DIR / "resources" / "tok" / "tok.py"
-        dst = Path.home() / ".local" / "bin" / "tok"
+def install_external_script(url: str, sha: str, entrypoint: str, name: str):
+    with task(name):
+        cache_dir = Path.home() / ".local" / "share" / "dev-installer" / "external" / name / sha
+
+        if not cache_dir.exists():
+            with task("fetching"):
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                run(f"git -C {cache_dir} init -q")
+                run(f"git -C {cache_dir} remote add origin {url}")
+                run(f"git -C {cache_dir} fetch --depth=1 -q origin {sha}")
+                run(f"git -C {cache_dir} checkout -q {sha}")
+
+        actual = subprocess.run(
+            f"git -C {cache_dir} rev-parse HEAD",
+            shell=True, capture_output=True, text=True,
+        ).stdout.strip()
+        if actual != sha:
+            log(f"FAILED: SHA mismatch — expected {sha}, got {actual}")
+            sys.exit(1)
+
+        src = cache_dir / entrypoint
+        dst = Path.home() / ".local" / "bin" / name
         dst.parent.mkdir(parents=True, exist_ok=True)
         if dst.is_symlink() or dst.exists():
             if dst.is_symlink() and dst.resolve() == src.resolve():
@@ -476,7 +516,9 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group]) -> set[str
                     initial_state=True,
                 ))
             else:
-                entries.append(Selection(f"{indent}{node_id}", node_id, initial_state=True))
+                item = next((i for i in items if i.id == node_id), None)
+                label = f"{indent}{node_id} [dim]\\[ext][/dim]" if item and item.external else f"{indent}{node_id}"
+                entries.append(Selection(label, node_id, initial_state=True))
             for child_id, child_is_group in children_of.get(node_id, []):
                 visit(child_id, child_is_group, depth + 1)
         for node_id, is_group in children_of[None]:

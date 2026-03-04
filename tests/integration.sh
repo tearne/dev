@@ -26,6 +26,7 @@ echo "Pushing setup files into container..."
 incus exec "$CONTAINER" -- mkdir -p /root/setup
 incus file push "$SCRIPT_DIR/bootstrap_inst.sh" "$CONTAINER/root/setup/"
 incus file push "$SCRIPT_DIR/install.py" "$CONTAINER/root/setup/"
+incus file push "$SCRIPT_DIR/external_scripts.toml" "$CONTAINER/root/setup/"
 incus file push -r "$SCRIPT_DIR/resources" "$CONTAINER/root/setup/"
 
 echo "Running setup inside container..."
@@ -81,9 +82,13 @@ check_symlink() {
     fi
 }
 
+TOK_SHA=$(cexec "grep '^sha' /root/setup/external_scripts.toml | grep -oP '\"[^\"]+\"' | tr -d '\"'")
+
 check_symlink ~/.config/helix/config.toml   "../../setup/resources/helix/config.toml"   "config.toml symlink"
 check_symlink ~/.config/helix/languages.toml "../../setup/resources/helix/languages.toml" "languages.toml symlink"
-check_symlink ~/.local/bin/tok               "../../setup/resources/tok/tok.py"            "tok symlink"
+check_symlink ~/.local/bin/tok \
+    "../share/dev-installer/external/tok/${TOK_SHA}/tok.py" \
+    "tok symlink"
 
 # --- PATH (1 check) ---
 if cexec "bash --login -c 'echo \$PATH'" 2>/dev/null | grep -q '\.local/bin'; then

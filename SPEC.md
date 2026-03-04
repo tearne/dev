@@ -34,7 +34,8 @@ All latest stable versions. Items are organised into a visual tree in the TUI. E
     htop, btop
   unattended-upgrades
     all-upgrades — extends automatic updates to all apt repositories (not just security)
-  incus, tok, zellij
+  incus, zellij
+  tok [ext] — fetched from external repository at pinned version
 [Rust]
   rust (rustup/rustc/cargo)
     rust-analyzer
@@ -86,8 +87,14 @@ regardless of the position of items in `_items()`.
 - Falls back to `dir` backend when ZFS is not installed.
 - The already-initialised check runs with sudo, so it works correctly for users not in the `incus-admin` group.
 
-### Scripts
-- `tok` installed in `~/.local/bin/` (see `resources/tok/SPEC.md`)
+### External Scripts
+- Scripts from external repositories can be registered for installation. Only explicitly
+  approved, pinned versions are ever installed; updating a pin is a deliberate, reviewable
+  change to this repository.
+- If an approved version has already been fetched, installation proceeds without network access.
+- The installer verifies what was fetched matches the approved version before installing.
+- External items appear in the TUI marked with `[ext]` alongside built-in items.
+- `tok` (encrypted secret manager) is installed this way from `github.com/tearne/tok`.
 
 ### Configuration
 - `~/.local/bin/` is on the user's `PATH` in new terminals.
@@ -134,19 +141,20 @@ regardless of the position of items in `_items()`.
 - Root structure:
 ```
 <project root>/
-├── resources/  # Config files to be soft linked during installation
+├── resources/           # Config files to be soft linked during installation
 ├── tests/
 │   ├── unit.py          # Unit tests (no container required)
 │   └── integration.sh   # Incus integration test harness
-├── bootstrap_inst.sh  # Bash entry point, bootstraps uv
-├── install.py         # Python logic (uv single-file script)
+├── bootstrap_inst.sh    # Bash entry point, bootstraps uv
+├── external_scripts.toml  # Registry of approved external script sources
+├── install.py           # Python logic (uv single-file script)
 ```
 
 ## Verification
 
 Two test layers:
 
-- **Unit tests** (`tests/unit.py`) — cover file-operation logic (symlink creation, config diffing, PATH setup). Run with `uv run --with pytest pytest tests/unit.py`. No container required.
+- **Unit tests** (`tests/unit.py`) — cover file-operation logic (symlink creation, config diffing, PATH setup). Run with `./tests/unit.py` or `uv run --with pytest pytest tests/unit.py`. No container required.
 - **Integration tests** (`tests/integration.sh`) — run the full install inside an Incus container (latest LTS Ubuntu). Requires Incus on the host. Test where possible but avoid disproportionate complexity or polluting external API.
 
 ### Unit Test Scenarios (`tests/unit.py`)
@@ -159,6 +167,13 @@ Two test layers:
   - Dangling symlink is replaced silently.
   - Real file with different content is not overwritten; a warning is issued.
   - Real file with whitespace-equivalent content is skipped without warning.
+- External script installation:
+  - Symlink created correctly when cache is pre-populated.
+  - Fetch is skipped when cache already exists.
+  - Existing correct symlink is skipped without warning.
+  - Dangling symlink is replaced silently.
+  - Real file at destination is not overwritten; a warning is issued.
+  - SHA mismatch causes immediate exit before any file is written.
 - PATH setup:
   - `~/.local/bin` export is appended to `.profile` when not present.
   - Not appended again if already present.
@@ -181,7 +196,7 @@ Two test layers:
   - `pyright --version` executes successfully (verifying the Node.js runtime loads, not just that the wrapper script is on PATH).
 - Symlinks:
   - Helix config symlinks point to the expected relative targets.
-  - `tok` symlink points to the expected relative target.
+  - `tok` symlink points into the external script cache at the pinned SHA.
 - Config content matches spec (`theme = "autumn"`, `dialect = "British"`).
 - New terminals have `~/.local/bin` on `PATH`.
 - Existing config is not overwritten on re-run; warning is emitted.
