@@ -21,6 +21,7 @@ This project contains items to help set up a development environment on Ubuntu/D
 - `-l`/`--list` prints a plain-text table of all installable item ids and exits without installing anything.
 - Prompts for sudo password once at start. Skips the prompt when running as root or when sudo credentials are already cached (passwordless sudo).
 - If a tool is already installed, its installation step is skipped. Idempotent configuration (e.g. git aliases) is applied unconditionally so it is correct on re-runs.
+- At startup, the session type is detected via `WAYLAND_DISPLAY` or `XDG_SESSION_TYPE`. Clipboard items are pre-selected in the TUI based on the detected session; both are deselected by default when no session is detected (e.g. headless/SSH).
 - On failure, exits immediately. The last log line identifies the failed command and its exit code.
 - Each installation step displays the shell command being run, without scrolling previous output off screen.
 - Installs its own dependencies at runtime where possible (e.g. `uv`, `curl`).
@@ -32,6 +33,9 @@ All latest stable versions. Items are organised into a visual tree in the TUI. E
 [System]
   [Resource]
     htop, btop
+  [Clipboard]
+    wl-clipboard — pre-selected when a Wayland session is detected
+    xclip — pre-selected when an X11 session is detected
   unattended-upgrades
     all-upgrades — extends automatic updates to all apt repositories (not just security)
   incus, zellij
@@ -121,8 +125,8 @@ regardless of the position of items in `_items()`.
 - POS style (see `DEFINITIONS.md`). Python 3.12, `uv` as runtime; `uv`
   bootstrapped via `curl`. Approved third-party dependencies: `textual`, `rich`.
 - Installation method by tool:
-  - **apt** (non-interactive, no PPA): `htop`, `btop`, `incus`,
-    `unattended-upgrades`; `libatomic1` (pyright runtime dep);
+  - **apt** (non-interactive, no PPA): `htop`, `btop`, `wl-clipboard`, `xclip`,
+    `incus`, `unattended-upgrades`; `libatomic1` (pyright runtime dep);
     `build-essential` (rust build dep)
   - **RustUp** (via `curl`): `rust`
   - **`rustup component add`**: `rust-analyzer`

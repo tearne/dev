@@ -419,6 +419,54 @@ def test_collect_ancestors_deeply_nested():
 
 
 # ---------------------------------------------------------------------------
+# detect_session_type
+# ---------------------------------------------------------------------------
+
+def test_detect_session_type_wayland_display(monkeypatch):
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    monkeypatch.delenv("XDG_SESSION_TYPE", raising=False)
+    assert install.detect_session_type() == "wayland"
+
+
+def test_detect_session_type_xdg_wayland(monkeypatch):
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    assert install.detect_session_type() == "wayland"
+
+
+def test_detect_session_type_x11(monkeypatch):
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+    assert install.detect_session_type() == "x11"
+
+
+def test_detect_session_type_headless(monkeypatch):
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.delenv("XDG_SESSION_TYPE", raising=False)
+    assert install.detect_session_type() is None
+
+
+# ---------------------------------------------------------------------------
+# InstallItem default_selected
+# ---------------------------------------------------------------------------
+
+def test_default_selected_defaults_to_true():
+    item = install.InstallItem("x", lambda: None)
+    assert item.default_selected is True
+
+
+def test_default_selected_false_excluded_from_initial_tui_set():
+    noop = lambda: None
+    items = [
+        install.InstallItem("a", noop, default_selected=True),
+        install.InstallItem("b", noop, default_selected=False),
+    ]
+    initial = {item.id for item in items if item.default_selected}
+    assert "a" in initial
+    assert "b" not in initial
+
+
+# ---------------------------------------------------------------------------
 # install_rust PATH update
 # ---------------------------------------------------------------------------
 

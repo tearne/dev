@@ -39,12 +39,14 @@ class InstallItem:
     parent: str | None = None  # group name or item id; None = top-level
     requires: list[str] = field(default_factory=list)
     external: bool = False
+    default_selected: bool = True
 
 
 def _groups() -> list[Group]:
     return [
         Group("System"),
         Group("Resource", parent="System"),
+        Group("Clipboard", parent="System"),
         Group("Rust"),
         Group("Git"),
         Group("Helix"),
@@ -74,10 +76,13 @@ def _load_external_items() -> list[InstallItem]:
 
 
 def _items() -> list[InstallItem]:
+    session = detect_session_type()
     return [
         # System
         InstallItem("htop",                install_htop,                parent="Resource"),
         InstallItem("btop",                install_btop,                parent="Resource"),
+        InstallItem("wl-clipboard",        install_wl_clipboard,        parent="Clipboard", default_selected=(session == "wayland")),
+        InstallItem("xclip",               install_xclip,               parent="Clipboard", default_selected=(session == "x11")),
         InstallItem("unattended-upgrades", install_unattended_upgrades, parent="System"),
         InstallItem("all-upgrades",        install_all_upgrades,        parent="unattended-upgrades", requires=["unattended-upgrades"]),
         InstallItem("incus",               install_incus_and_init,      parent="System"),
@@ -97,6 +102,22 @@ def _items() -> list[InstallItem]:
         InstallItem("pyright",             install_pyright,             parent="helix"),
         InstallItem("ruff",                install_ruff,                parent="helix"),
     ] + _load_external_items()
+
+
+# ---------------------------------------------------------------------------
+# Session detection
+# ---------------------------------------------------------------------------
+
+def detect_session_type() -> str | None:
+    """Return 'wayland', 'x11', or None (headless/unknown)."""
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return "wayland"
+    xdg = os.environ.get("XDG_SESSION_TYPE", "").lower()
+    if xdg == "wayland":
+        return "wayland"
+    if xdg == "x11":
+        return "x11"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +180,24 @@ def install_btop():
             log("already installed, skipping")
             return
         sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq btop")
+        log("done")
+
+
+def install_wl_clipboard():
+    with task("wl-clipboard"):
+        if is_installed("wl-copy"):
+            log("already installed, skipping")
+            return
+        sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq wl-clipboard")
+        log("done")
+
+
+def install_xclip():
+    with task("xclip"):
+        if is_installed("xclip"):
+            log("already installed, skipping")
+            return
+        sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xclip")
         log("done")
 
 
@@ -518,7 +557,7 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group]) -> set[str
             else:
                 item = next((i for i in items if i.id == node_id), None)
                 label = f"{indent}{node_id} [dim]\\[ext][/dim]" if item and item.external else f"{indent}{node_id}"
-                entries.append(Selection(label, node_id, initial_state=True))
+                entries.append(Selection(label, node_id, initial_state=item.default_selected if item else True))
             for child_id, child_is_group in children_of.get(node_id, []):
                 visit(child_id, child_is_group, depth + 1)
         for node_id, is_group in children_of[None]:
@@ -544,7 +583,7 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group]) -> set[str
         def __init__(self):
             super().__init__()
             self._result: set[str] | None = None
-            self._user_selected: set[str] = set(all_ids)
+            self._user_selected: set[str] = {item.id for item in items if item.default_selected}
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
