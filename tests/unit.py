@@ -455,16 +455,6 @@ def test_default_selected_defaults_to_true():
     assert item.default_selected is True
 
 
-def test_default_selected_false_excluded_from_initial_tui_set():
-    noop = lambda: None
-    items = [
-        install.InstallItem("a", noop, default_selected=True),
-        install.InstallItem("b", noop, default_selected=False),
-    ]
-    initial = {item.id for item in items if item.default_selected}
-    assert "a" in initial
-    assert "b" not in initial
-
 
 # ---------------------------------------------------------------------------
 # install_rust PATH update
@@ -500,6 +490,115 @@ def test_setup_local_bin_path_skips_if_already_present(tmp_path):
     install.setup_local_bin_path()
     content_after_second = (tmp_path / ".profile").read_text()
     assert content_after_first == content_after_second
+
+
+# ---------------------------------------------------------------------------
+# in_container
+# ---------------------------------------------------------------------------
+
+def _fake_run_factory(returncode):
+    """Return a subprocess.run replacement that always returns the given code."""
+    import subprocess as sp
+    def fake_run(cmd, **kwargs):
+        return sp.CompletedProcess(cmd, returncode)
+    return fake_run
+
+
+def test_in_container_true_via_systemd_detect_virt(monkeypatch):
+    monkeypatch.setattr("subprocess.run", _fake_run_factory(0))
+    assert install.in_container() is True
+
+
+def test_in_container_false_via_systemd_detect_virt(monkeypatch, tmp_path):
+    monkeypatch.setattr("subprocess.run", _fake_run_factory(1))
+    monkeypatch.setattr(install, "_CONTAINER_MARKER_FILES", ())
+    assert install.in_container() is False
+
+
+def test_in_container_fallback_marker_file(monkeypatch, tmp_path):
+    monkeypatch.setattr("subprocess.run", _fake_run_factory(1))
+    marker = tmp_path / ".containerenv"
+    marker.touch()
+    monkeypatch.setattr(install, "_CONTAINER_MARKER_FILES", (marker,))
+    assert install.in_container() is True
+
+
+def test_in_container_fallback_no_marker_files(monkeypatch, tmp_path):
+    monkeypatch.setattr("subprocess.run", _fake_run_factory(1))
+    monkeypatch.setattr(install, "_CONTAINER_MARKER_FILES", (tmp_path / "absent",))
+    assert install.in_container() is False
+
+
+def test_in_container_systemd_absent_falls_back_to_marker(monkeypatch, tmp_path):
+    """Exit 127 (command not found via shell) falls back to marker files."""
+    monkeypatch.setattr("subprocess.run", _fake_run_factory(127))
+    marker = tmp_path / ".containerenv"
+    marker.touch()
+    monkeypatch.setattr(install, "_CONTAINER_MARKER_FILES", (marker,))
+    assert install.in_container() is True
+
+
+# ---------------------------------------------------------------------------
+# compute_item_hints
+# ---------------------------------------------------------------------------
+
+def _hint_items():
+    noop = lambda: None
+    return [
+        install.InstallItem("plain",   noop, install_check=None),
+        install.InstallItem("present", noop, install_check=lambda: True),
+        install.InstallItem("absent",  noop, install_check=lambda: False),
+        install.InstallItem("incus",   noop, install_check=lambda: False),
+        install.InstallItem("preoff",  noop, install_check=None, default_selected=False),
+    ]
+
+
+def test_compute_hints_installed_item_deselected(monkeypatch):
+    monkeypatch.setattr(install, "in_container", lambda: False)
+    hints = install.compute_item_hints(_hint_items())
+    selected, hint = hints["present"]
+    assert selected is False
+    assert hint == "installed"
+
+
+def test_compute_hints_absent_item_selected(monkeypatch):
+    monkeypatch.setattr(install, "in_container", lambda: False)
+    hints = install.compute_item_hints(_hint_items())
+    selected, hint = hints["absent"]
+    assert selected is True
+    assert hint is None
+
+
+def test_compute_hints_no_check_preserves_default_selected(monkeypatch):
+    monkeypatch.setattr(install, "in_container", lambda: False)
+    hints = install.compute_item_hints(_hint_items())
+    selected, hint = hints["plain"]
+    assert selected is True
+    assert hint is None
+
+
+def test_compute_hints_no_check_preserves_default_selected_false(monkeypatch):
+    monkeypatch.setattr(install, "in_container", lambda: False)
+    hints = install.compute_item_hints(_hint_items())
+    selected, hint = hints["preoff"]
+    assert selected is False
+    assert hint is None
+
+
+def test_compute_hints_incus_in_container_deselected(monkeypatch):
+    monkeypatch.setattr(install, "in_container", lambda: True)
+    hints = install.compute_item_hints(_hint_items())
+    selected, hint = hints["incus"]
+    assert selected is False
+    assert hint == "already in container"
+
+
+def test_compute_hints_incus_not_in_container_unaffected(monkeypatch):
+    monkeypatch.setattr(install, "in_container", lambda: False)
+    hints = install.compute_item_hints(_hint_items())
+    selected, hint = hints["incus"]
+    assert selected is True   # install_check returns False → not installed → keep selected
+    assert hint is None
 
 
 if __name__ == "__main__":

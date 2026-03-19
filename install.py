@@ -40,6 +40,8 @@ class InstallItem:
     requires: list[str] = field(default_factory=list)
     external: bool = False
     default_selected: bool = True
+    install_check: str | Callable[[], bool] | None = None
+    deselect_hint: str | None = None
 
 
 def _groups() -> list[Group]:
@@ -71,6 +73,7 @@ def _load_external_items() -> list[InstallItem]:
             installer=lambda u=url, s=sha, e=entrypoint, n=name: install_external_script(u, s, e, n),
             parent="System",
             external=True,
+            install_check=name,
         ))
     return items
 
@@ -79,29 +82,48 @@ def _items() -> list[InstallItem]:
     session = detect_session_type()
     return [
         # System
-        InstallItem("htop",                install_htop,                parent="Resource"),
-        InstallItem("btop",                install_btop,                parent="Resource"),
-        InstallItem("wl-clipboard",        install_wl_clipboard,        parent="Clipboard", default_selected=(session == "wayland")),
-        InstallItem("xclip",               install_xclip,               parent="Clipboard", default_selected=(session == "x11")),
-        InstallItem("unattended-upgrades", install_unattended_upgrades, parent="System"),
-        InstallItem("all-upgrades",        install_all_upgrades,        parent="unattended-upgrades", requires=["unattended-upgrades"]),
-        InstallItem("incus",               install_incus_and_init,      parent="System"),
-        InstallItem("zellij",              install_zellij,              parent="System",  requires=["cargo-binstall"]),
+        InstallItem("htop",                install_htop,                parent="Resource", install_check="htop"),
+        InstallItem("btop",                install_btop,                parent="Resource", install_check="btop"),
+        InstallItem("wl-clipboard",        install_wl_clipboard,        parent="Clipboard", default_selected=(session == "wayland"), install_check="wl-copy", deselect_hint="wayland not detected"),
+        InstallItem("xclip",               install_xclip,               parent="Clipboard", default_selected=(session == "x11"),      install_check="xclip",   deselect_hint="x11 not detected"),
+        InstallItem("unattended-upgrades", install_unattended_upgrades, parent="System",   install_check="unattended-upgrades"),
+        InstallItem("all-upgrades",        install_all_upgrades,        parent="unattended-upgrades", requires=["unattended-upgrades"], install_check=path_exists("/etc/apt/apt.conf.d/99unattended-upgrades-all-origins")),
+        InstallItem("incus",               install_incus_and_init,      parent="System",   install_check="incus"),
+        InstallItem("zellij",              install_zellij,              parent="System",   requires=["cargo-binstall"], install_check="zellij"),
         # Rust
-        InstallItem("rust",                install_rust,                parent="Rust"),
-        InstallItem("rust-analyzer",       install_rust_analyzer,       parent="rust",    requires=["rust"]),
-        InstallItem("cargo-binstall",      install_cargo_binstall,      parent="rust",    requires=["rust"]),
+        InstallItem("rust",                install_rust,                parent="Rust",     install_check="rustc"),
+        InstallItem("rust-analyzer",       install_rust_analyzer,       parent="rust",     requires=["rust"],           install_check="rust-analyzer"),
+        InstallItem("cargo-binstall",      install_cargo_binstall,      parent="rust",     requires=["rust"],           install_check="cargo-binstall"),
         # Git
-        InstallItem("delta",               install_delta,               parent="Git",     requires=["cargo-binstall"]),
-        InstallItem("difft",               install_difft,               parent="Git",     requires=["cargo-binstall"]),
+        InstallItem("delta",               install_delta,               parent="Git",      requires=["cargo-binstall"], install_check="delta"),
+        InstallItem("difft",               install_difft,               parent="Git",      requires=["cargo-binstall"], install_check="difft"),
         # Helix
-        InstallItem("helix",               install_helix,               parent="Helix"),
-        InstallItem("biome",               install_biome,               parent="helix"),
-        InstallItem("harper-ls",           install_harper_ls,           parent="helix",   requires=["cargo-binstall"]),
-        InstallItem("markdown-oxide",      install_markdown_oxide,      parent="helix",   requires=["cargo-binstall"]),
-        InstallItem("pyright",             install_pyright,             parent="helix"),
-        InstallItem("ruff",                install_ruff,                parent="helix"),
+        InstallItem("helix",               install_helix,               parent="Helix",    install_check="hx"),
+        InstallItem("biome",               install_biome,               parent="helix",    install_check="biome"),
+        InstallItem("harper-ls",           install_harper_ls,           parent="helix",    requires=["cargo-binstall"], install_check="harper-ls"),
+        InstallItem("markdown-oxide",      install_markdown_oxide,      parent="helix",    requires=["cargo-binstall"], install_check="markdown-oxide"),
+        InstallItem("pyright",             install_pyright,             parent="helix",    install_check="pyright"),
+        InstallItem("ruff",                install_ruff,                parent="helix",    install_check="ruff"),
     ] + _load_external_items()
+
+
+# ---------------------------------------------------------------------------
+# Environment detection
+# ---------------------------------------------------------------------------
+
+_CONTAINER_MARKER_FILES = (Path("/run/.containerenv"), Path("/.dockerenv"))
+
+
+def in_container() -> bool:
+    """Return True if the process is running inside a container."""
+    result = subprocess.run(
+        "systemd-detect-virt --container --quiet",
+        shell=True,
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return True
+    return any(p.exists() for p in _CONTAINER_MARKER_FILES)
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +170,31 @@ def resolve_selection(items: list[InstallItem], user_selected: set[str]) -> set[
                     changed = True
 
     return selected
+
+
+# ---------------------------------------------------------------------------
+# Item hint computation
+# ---------------------------------------------------------------------------
+
+def compute_item_hints(items: list[InstallItem]) -> dict[str, tuple[bool, str | None]]:
+    """Return {item_id: (default_selected, hint)} for every item.
+
+    Probes install_check and container context once; callers use the result
+    to set TUI initial states and display annotations without further I/O.
+    """
+    container = in_container()
+    hints = {}
+    for item in items:
+        if item.id == "incus" and container:
+            hints[item.id] = (False, "already in container")
+        elif item.install_check is not None and (
+            is_installed(item.install_check) if isinstance(item.install_check, str) else item.install_check()
+        ):
+            hints[item.id] = (False, "installed")
+        else:
+            hint = item.deselect_hint if not item.default_selected else None
+            hints[item.id] = (item.default_selected, hint)
+    return hints
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +259,7 @@ def install_unattended_upgrades():
 
 def install_all_upgrades():
     with task("all-upgrades"):
-        override = Path("/etc/apt/apt.conf.d/99unattended-upgrades-override")
+        override = Path("/etc/apt/apt.conf.d/99unattended-upgrades-all-origins")
         if override.exists():
             log("origins already configured, skipping")
             return
@@ -221,7 +268,7 @@ def install_all_upgrades():
         # not just security (the default in 50unattended-upgrades). The 99 prefix
         # gives it priority; 50unattended-upgrades is left untouched by this install.
         # To restore the default security-only behaviour, delete this file.
-        tmp = Path("/tmp/99unattended-upgrades-override")
+        tmp = Path("/tmp/99unattended-upgrades-all-origins")
         tmp.write_text('Unattended-Upgrade::Allowed-Origins {\n\t"*:*";\n};\n')
         sudo(f"mv {tmp} {override}")
         log("origins configured")
@@ -516,7 +563,7 @@ def _collect_ancestors(node_id: str, parent_of: dict, group_names: set) -> list[
 # TUI
 # ---------------------------------------------------------------------------
 
-def run_selection_menu(items: list[InstallItem], groups: list[Group]) -> set[str] | None:
+def run_selection_menu(items: list[InstallItem], groups: list[Group], hints: dict[str, tuple[bool, str | None]]) -> set[str] | None:
     """Display the interactive selection menu.
 
     Returns the user_selected set on confirmation, or None if the user aborted.
@@ -527,7 +574,6 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group]) -> set[str
     from textual.widgets import Footer, Header, SelectionList, Static
     from textual.widgets.selection_list import Selection
 
-    all_ids = [item.id for item in items]
     group_names = {g.name for g in groups}
 
     # children_of: parent_id (or None) -> [(node_id, is_group), ...]
@@ -544,24 +590,55 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group]) -> set[str
     for item in items:
         parent_of[item.id] = item.parent
 
+    def _any_descendant_selected(node_id: str) -> bool:
+        for child_id, child_is_group in children_of.get(node_id, []):
+            if child_is_group:
+                if _any_descendant_selected(child_id):
+                    return True
+            else:
+                selected, _ = hints.get(child_id, (True, None))
+                if selected:
+                    return True
+        return False
+
     def _make_selections() -> list[Selection]:
+        # Pass 1: collect ordered nodes and compute max item label width.
+        ordered: list[tuple[str, bool, int]] = []
+        def collect(node_id: str, is_group: bool, depth: int) -> None:
+            ordered.append((node_id, is_group, depth))
+            for child_id, child_is_group in children_of.get(node_id, []):
+                collect(child_id, child_is_group, depth + 1)
+        for node_id, is_group in children_of[None]:
+            collect(node_id, is_group, 0)
+
+        def visual_width(node_id: str, depth: int) -> int:
+            item = next((i for i in items if i.id == node_id), None)
+            base = len("  " * depth) + len(node_id)
+            return base + len(" [ext]") if item and item.external else base
+
+        max_width = max(
+            (visual_width(nid, d) for nid, is_group, d in ordered if not is_group),
+            default=0,
+        )
+
+        # Pass 2: build Selection entries with hints aligned to a column.
         entries = []
-        def visit(node_id: str, is_group: bool, depth: int) -> None:
+        for node_id, is_group, depth in ordered:
             indent = "  " * depth
             if is_group:
                 entries.append(Selection(
                     f"{indent}[bold]\\[{node_id}][/bold]",
                     f"__group_{node_id}__",
-                    initial_state=True,
+                    initial_state=_any_descendant_selected(node_id),
                 ))
             else:
                 item = next((i for i in items if i.id == node_id), None)
+                selected, hint = hints.get(node_id, (item.default_selected if item else True, None))
                 label = f"{indent}{node_id} [dim]\\[ext][/dim]" if item and item.external else f"{indent}{node_id}"
-                entries.append(Selection(label, node_id, initial_state=item.default_selected if item else True))
-            for child_id, child_is_group in children_of.get(node_id, []):
-                visit(child_id, child_is_group, depth + 1)
-        for node_id, is_group in children_of[None]:
-            visit(node_id, is_group, 0)
+                if hint:
+                    pad = " " * (max_width - visual_width(node_id, depth) + 2)
+                    label += f"{pad}[dim]{hint}[/dim]"
+                entries.append(Selection(label, node_id, initial_state=selected))
         return entries
 
     class InstallerApp(App):
@@ -583,7 +660,7 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group]) -> set[str
         def __init__(self):
             super().__init__()
             self._result: set[str] | None = None
-            self._user_selected: set[str] = {item.id for item in items if item.default_selected}
+            self._user_selected: set[str] = {item.id for item in items if hints.get(item.id, (item.default_selected, None))[0]}
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
@@ -775,6 +852,10 @@ def is_installed(cmd):
     return shutil.which(cmd) is not None
 
 
+def path_exists(path: str) -> Callable[[], bool]:
+    return lambda: Path(path).exists()
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -863,7 +944,7 @@ def main():
     user_selected = _parse_args(items)
 
     if user_selected is None:
-        user_selected = run_selection_menu(items, groups)
+        user_selected = run_selection_menu(items, groups, compute_item_hints(items))
         if user_selected is None:
             print("Aborted.")
             sys.exit(0)

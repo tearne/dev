@@ -16,12 +16,15 @@ This project contains items to help set up a development environment on Ubuntu/D
 ## Behaviour
 
 ### Installation Process
-- Before installation begins, a full-screen interactive menu is presented listing all installable items, all selected by default. The user may deselect items before confirming with Enter.
+- Before installation begins, a full-screen interactive menu is presented listing all installable items. The user may deselect items before confirming with Enter.
 - Passing `--all`, `--only <item> [...]`, or `--skip <item> [...]` bypasses the menu for non-interactive use. Items are specified by full id. If no flag is given and stdin is not a TTY, the script exits with an error directing the user to rerun with one of the three flags.
 - `-l`/`--list` prints a plain-text table of all installable item ids and exits without installing anything.
 - Prompts for sudo password once at start. Skips the prompt when running as root or when sudo credentials are already cached (passwordless sudo).
 - If a tool is already installed, its installation step is skipped. Idempotent configuration (e.g. git aliases) is applied unconditionally so it is correct on re-runs.
 - At startup, the session type is detected via `WAYLAND_DISPLAY` or `XDG_SESSION_TYPE`. Clipboard items are pre-selected in the TUI based on the detected session; both are deselected by default when no session is detected (e.g. headless/SSH).
+- At TUI startup, each item is probed to determine whether it is already installed. Items already installed are deselected by default and annotated `installed`. `incus` is additionally deselected and annotated `already in container` when the installer detects it is running inside a container. Clipboard tools may be deselected for two independent reasons: session type or already installed — either condition alone is sufficient. All pre-deselection defaults are overridable by the user.
+- Group headers are deselected when all their descendant items are deselected.
+- Hint annotations are aligned to a common column across all items.
 - On failure, exits immediately. The last log line identifies the failed command and its exit code.
 - Each installation step displays the shell command being run, without scrolling previous output off screen.
 - Installs its own dependencies at runtime where possible (e.g. `uv`, `curl`).
@@ -191,6 +194,16 @@ Two test layers:
   - `InstallItem` `parent` field defaults to `None`.
 - `--only`/`--skip` accept full ids only; unknown ids are rejected with an error.
 - `--list` output contains id only.
+- Container detection (`in_container()`):
+  - Returns `True` when `systemd-detect-virt --container --quiet` exits 0.
+  - Returns `False` when it exits non-zero and no marker files are present.
+  - Falls back to marker files (`/run/.containerenv`, `/.dockerenv`) when the command exits non-zero (e.g. exit 127 when unavailable).
+- Item hint computation (`compute_item_hints()`):
+  - Item with `install_check` returning true → deselected with `installed` hint.
+  - Item with `install_check` returning false → selected, no hint.
+  - Item with no `install_check` → preserves `default_selected`, no hint.
+  - Item with `default_selected=False` and `deselect_hint` set → deselected with that hint.
+  - `incus` when in container → deselected with `already in container` hint.
 
 ### Integration Test Scenarios (`tests/integration.sh`)
 - Tool installation:
