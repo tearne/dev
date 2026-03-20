@@ -42,6 +42,7 @@ class InstallItem:
     default_selected: bool = True
     install_check: str | Callable[[], bool] | None = None
     deselect_hint: str | None = None
+    uses_sudo: bool = False
 
 
 def _groups() -> list[Group]:
@@ -82,23 +83,24 @@ def _items() -> list[InstallItem]:
     session = detect_session_type()
     return [
         # System
-        InstallItem("htop",                install_htop,                parent="Resource", install_check="htop"),
-        InstallItem("btop",                install_btop,                parent="Resource", install_check="btop"),
-        InstallItem("wl-clipboard",        install_wl_clipboard,        parent="Clipboard", default_selected=(session == "wayland"), install_check="wl-copy", deselect_hint="wayland not detected"),
-        InstallItem("xclip",               install_xclip,               parent="Clipboard", default_selected=(session == "x11"),      install_check="xclip",   deselect_hint="x11 not detected"),
-        InstallItem("unattended-upgrades", install_unattended_upgrades, parent="System",   install_check="unattended-upgrades"),
-        InstallItem("all-upgrades",        install_all_upgrades,        parent="unattended-upgrades", requires=["unattended-upgrades"], install_check=path_exists("/etc/apt/apt.conf.d/99unattended-upgrades-all-origins")),
-        InstallItem("incus",               install_incus_and_init,      parent="System",   install_check="incus"),
+        InstallItem("htop",                install_htop,                parent="Resource", install_check="htop",          uses_sudo=True),
+        InstallItem("btop",                install_btop,                parent="Resource", install_check="btop",          uses_sudo=True),
+        InstallItem("wl-clipboard",        install_wl_clipboard,        parent="Clipboard", default_selected=(session == "wayland"), install_check="wl-copy", deselect_hint="wayland not detected", uses_sudo=True),
+        InstallItem("xclip",               install_xclip,               parent="Clipboard", default_selected=(session == "x11"),      install_check="xclip",   deselect_hint="x11 not detected",     uses_sudo=True),
+        InstallItem("unattended-upgrades", install_unattended_upgrades, parent="System",   install_check="unattended-upgrades",       uses_sudo=True),
+        InstallItem("all-upgrades",        install_all_upgrades,        parent="unattended-upgrades", requires=["unattended-upgrades"], install_check=path_exists("/etc/apt/apt.conf.d/99unattended-upgrades-all-origins"), uses_sudo=True),
+        InstallItem("incus",               install_incus_and_init,      parent="System",   install_check="incus",         uses_sudo=True),
         InstallItem("zellij",              install_zellij,              parent="System",   requires=["cargo-binstall"], install_check="zellij"),
         # Rust
-        InstallItem("rust",                install_rust,                parent="Rust",     install_check="rustc"),
-        InstallItem("rust-analyzer",       install_rust_analyzer,       parent="rust",     requires=["rust"],           install_check="rust-analyzer"),
-        InstallItem("cargo-binstall",      install_cargo_binstall,      parent="rust",     requires=["rust"],           install_check="cargo-binstall"),
+        InstallItem("build-essential",     install_build_essential,     parent="System",   install_check="gcc",           uses_sudo=True),
+        InstallItem("rustup",              install_rust,                parent="Rust",     install_check="rustup",        requires=["build-essential"]),
+        InstallItem("rust-analyzer",       install_rust_analyzer,       parent="rustup",   requires=["rustup"],           install_check="rust-analyzer"),
+        InstallItem("cargo-binstall",      install_cargo_binstall,      parent="rustup",   requires=["rustup"],           install_check="cargo-binstall"),
         # Git
         InstallItem("delta",               install_delta,               parent="Git",      requires=["cargo-binstall"], install_check="delta"),
         InstallItem("difft",               install_difft,               parent="Git",      requires=["cargo-binstall"], install_check="difft"),
         # Helix
-        InstallItem("helix",               install_helix,               parent="Helix",    install_check="hx"),
+        InstallItem("helix",               install_helix,               parent="Helix",    install_check="hx",            uses_sudo=True),
         InstallItem("biome",               install_biome,               parent="helix",    install_check="biome"),
         InstallItem("harper-ls",           install_harper_ls,           parent="helix",    requires=["cargo-binstall"], install_check="harper-ls"),
         InstallItem("markdown-oxide",      install_markdown_oxide,      parent="helix",    requires=["cargo-binstall"], install_check="markdown-oxide"),
@@ -172,6 +174,19 @@ def resolve_selection(items: list[InstallItem], user_selected: set[str]) -> set[
     return selected
 
 
+def _check_installed(check: str | Callable[[], bool]) -> bool:
+    return is_installed(check) if isinstance(check, str) else check()
+
+
+def needs_sudo(items: list[InstallItem], selected: set[str]) -> bool:
+    for item in items:
+        if item.id in selected and item.uses_sudo:
+            if item.install_check is not None and _check_installed(item.install_check):
+                continue
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Item hint computation
 # ---------------------------------------------------------------------------
@@ -187,9 +202,7 @@ def compute_item_hints(items: list[InstallItem]) -> dict[str, tuple[bool, str | 
     for item in items:
         if item.id == "incus" and container:
             hints[item.id] = (False, "already in container")
-        elif item.install_check is not None and (
-            is_installed(item.install_check) if isinstance(item.install_check, str) else item.install_check()
-        ):
+        elif item.install_check is not None and _check_installed(item.install_check):
             hints[item.id] = (False, "installed")
         else:
             hint = item.deselect_hint if not item.default_selected else None
@@ -217,6 +230,7 @@ def install_htop():
         if is_installed("htop"):
             log("already installed, skipping")
             return
+        ensure_apt_updated()
         sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq htop")
         log("done")
 
@@ -226,6 +240,7 @@ def install_btop():
         if is_installed("btop"):
             log("already installed, skipping")
             return
+        ensure_apt_updated()
         sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq btop")
         log("done")
 
@@ -235,6 +250,7 @@ def install_wl_clipboard():
         if is_installed("wl-copy"):
             log("already installed, skipping")
             return
+        ensure_apt_updated()
         sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq wl-clipboard")
         log("done")
 
@@ -244,6 +260,7 @@ def install_xclip():
         if is_installed("xclip"):
             log("already installed, skipping")
             return
+        ensure_apt_updated()
         sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xclip")
         log("done")
 
@@ -251,6 +268,7 @@ def install_xclip():
 def install_unattended_upgrades():
     with task("unattended-upgrades"):
         if not is_installed("unattended-upgrades"):
+            ensure_apt_updated()
             sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq unattended-upgrades")
             log("installed")
         else:
@@ -279,6 +297,7 @@ def install_incus():
         if is_installed("incus"):
             log("already installed, skipping")
             return
+        ensure_apt_updated()
         sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq incus")
         log("done")
 
@@ -301,18 +320,23 @@ def init_incus():
         log("done")
 
 
-def install_rust():
+def install_build_essential():
     with task("build-essential"):
-        # Required by rustup (C linker + headers); install unconditionally
+        if is_installed("gcc"):
+            log("already installed, skipping")
+            return
+        ensure_apt_updated()
         sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential")
         log("done")
 
+
+def install_rust():
     cargo_bin = Path.home() / ".cargo" / "bin"
     if str(cargo_bin) not in os.environ["PATH"]:
         os.environ["PATH"] = str(cargo_bin) + ":" + os.environ["PATH"]
 
-    with task("Rust"):
-        if is_installed("rustc"):
+    with task("rustup"):
+        if is_installed("rustup"):
             log("already installed, skipping")
             return
         run("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y")
@@ -338,6 +362,7 @@ def install_cargo_binstall():
 
 
 def ensure_cargo_binstall():
+    install_build_essential()  # required by rustup C linker
     install_rust()  # ensure cargo is on PATH before any binstall operation
     if is_installed("cargo-binstall"):
         return
@@ -471,6 +496,7 @@ def install_pyright():
         # pyright-python downloads a prebuilt Node.js binary (via nodeenv). Node 25+
         # requires libatomic1, which is absent from minimal Debian/Ubuntu images.
         # https://github.com/nodejs/node/issues/60790
+        ensure_apt_updated()
         sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libatomic1")
         run("uv tool install pyright")
         log("done")
@@ -721,6 +747,7 @@ _indent = 0
 _password = None
 _warnings = []
 _logfile = None
+_apt_updated = False
 _ansi_re = re.compile(r"\033\[[0-9;]*m")  # strip ANSI escapes for log file
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -856,6 +883,14 @@ def path_exists(path: str) -> Callable[[], bool]:
     return lambda: Path(path).exists()
 
 
+def ensure_apt_updated():
+    global _apt_updated
+    if not _apt_updated:
+        with task("apt update"):
+            sudo("DEBIAN_FRONTEND=noninteractive apt-get update -qq")
+        _apt_updated = True
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -967,10 +1002,8 @@ def main():
     atexit.register(_logfile.close)
 
     with task("Dev environment setup"):
-        init_password()
-
-        with task("apt update"):
-            sudo("DEBIAN_FRONTEND=noninteractive apt-get update -qq")
+        if needs_sudo(items, selected):
+            init_password()
 
         install(items, selected)
 

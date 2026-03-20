@@ -493,6 +493,55 @@ def test_setup_local_bin_path_skips_if_already_present(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# needs_sudo
+# ---------------------------------------------------------------------------
+
+def test_needs_sudo_true_when_selected_item_uses_sudo():
+    noop = lambda: None
+    items = [
+        install.InstallItem("a", noop, uses_sudo=True),
+        install.InstallItem("b", noop, uses_sudo=False),
+    ]
+    assert install.needs_sudo(items, {"a"}) is True
+
+
+def test_needs_sudo_false_when_no_selected_item_uses_sudo():
+    noop = lambda: None
+    items = [
+        install.InstallItem("a", noop, uses_sudo=True),
+        install.InstallItem("b", noop, uses_sudo=False),
+    ]
+    assert install.needs_sudo(items, {"b"}) is False
+
+
+def test_needs_sudo_false_for_empty_selection():
+    noop = lambda: None
+    items = [install.InstallItem("a", noop, uses_sudo=True)]
+    assert install.needs_sudo(items, set()) is False
+
+
+def test_needs_sudo_false_when_sudo_item_not_selected():
+    noop = lambda: None
+    items = [
+        install.InstallItem("a", noop, uses_sudo=True),
+        install.InstallItem("b", noop, uses_sudo=False),
+    ]
+    assert install.needs_sudo(items, {"b"}) is False
+
+
+def test_needs_sudo_false_when_sudo_item_already_installed():
+    noop = lambda: None
+    items = [install.InstallItem("a", noop, uses_sudo=True, install_check=lambda: True)]
+    assert install.needs_sudo(items, {"a"}) is False
+
+
+def test_needs_sudo_true_when_sudo_item_not_yet_installed():
+    noop = lambda: None
+    items = [install.InstallItem("a", noop, uses_sudo=True, install_check=lambda: False)]
+    assert install.needs_sudo(items, {"a"}) is True
+
+
+# ---------------------------------------------------------------------------
 # in_container
 # ---------------------------------------------------------------------------
 

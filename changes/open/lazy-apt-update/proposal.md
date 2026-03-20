@@ -11,3 +11,6 @@ running the installer without sudo on hosts where only non-apt items are needed.
 ### MODIFIED
 - `apt-get update` runs at most once per invocation, and only when an apt installation is
   actually about to be performed. It does not run if no apt-requiring items are selected.
+- The sudo password prompt runs at most once per invocation, and only when at least one
+  selected item requires sudo. When sudo is needed, the prompt occurs before any
+  installation work begins — never mid-run.
