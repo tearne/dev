@@ -94,7 +94,7 @@ def _items() -> list[InstallItem]:
         # Rust
         InstallItem("build-essential",     install_build_essential,     parent="System",   install_check="gcc",           uses_sudo=True),
         InstallItem("rustup",              install_rust,                parent="Rust",     install_check="rustup",        requires=["build-essential"]),
-        InstallItem("rust-analyzer",       install_rust_analyzer,       parent="rustup",   requires=["rustup"],           install_check="rust-analyzer"),
+        InstallItem("rust-analyzer",       install_rust_analyzer,       parent="rustup",   requires=["rustup"],           install_check=rustup_component_installed("rust-analyzer")),
         InstallItem("cargo-binstall",      install_cargo_binstall,      parent="rustup",   requires=["rustup"],           install_check="cargo-binstall"),
         # Git
         InstallItem("delta",               install_delta,               parent="Git",      requires=["cargo-binstall"], install_check="delta"),
@@ -345,7 +345,7 @@ def install_rust():
 
 def install_rust_analyzer():
     with task("rust-analyzer"):
-        if is_installed("rust-analyzer"):
+        if rustup_component_installed("rust-analyzer")():
             log("already installed, skipping")
             return
         run("rustup component add rust-analyzer")
@@ -881,6 +881,18 @@ def is_installed(cmd):
 
 def path_exists(path: str) -> Callable[[], bool]:
     return lambda: Path(path).exists()
+
+
+def rustup_component_installed(component: str) -> Callable[[], bool]:
+    # shutil.which finds the rustup proxy regardless of whether the component
+    # is actually installed, so we must query rustup directly.
+    def check():
+        result = subprocess.run(
+            ["rustup", "component", "list", "--installed"],
+            capture_output=True, text=True
+        )
+        return any(line.startswith(component) for line in result.stdout.splitlines())
+    return check
 
 
 def ensure_apt_updated():
