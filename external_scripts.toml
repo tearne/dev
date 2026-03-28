@@ -1,5 +1,5 @@
 [[script]]
 url        = "https://github.com/tearne/tok.git"
-sha        = "954d459948cc052c53900f764cfe8e0649e52fab"
+sha        = "b2f163daa3d41d783daab928b8a7f7a94c051139"
 entrypoint = "tok.py"
 rename     = "tok"
