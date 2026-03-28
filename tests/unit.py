@@ -477,19 +477,49 @@ def test_install_rust_updates_path_when_already_installed(tmp_path, monkeypatch)
 # setup_local_bin_path
 # ---------------------------------------------------------------------------
 
-def test_setup_local_bin_path_appends_to_profile(tmp_path):
+def test_setup_local_bin_path_appends_to_profile_and_bashrc(tmp_path):
     install.setup_local_bin_path()
-    profile = tmp_path / ".profile"
-    assert profile.exists()
-    assert 'PATH="$HOME/.local/bin:$PATH"' in profile.read_text()
+    for name in (".profile", ".bashrc"):
+        f = tmp_path / name
+        assert f.exists()
+        assert 'PATH="$HOME/.local/bin:$PATH"' in f.read_text()
 
 
 def test_setup_local_bin_path_skips_if_already_present(tmp_path):
     install.setup_local_bin_path()
-    content_after_first = (tmp_path / ".profile").read_text()
+    contents_after_first = {n: (tmp_path / n).read_text() for n in (".profile", ".bashrc")}
     install.setup_local_bin_path()
-    content_after_second = (tmp_path / ".profile").read_text()
-    assert content_after_first == content_after_second
+    for name, content in contents_after_first.items():
+        assert (tmp_path / name).read_text() == content
+
+
+# ---------------------------------------------------------------------------
+# setup_helix_as_editor
+# ---------------------------------------------------------------------------
+
+def test_setup_helix_as_editor_appends_to_profile_and_bashrc(tmp_path, monkeypatch):
+    monkeypatch.setattr(install.shutil, "which", lambda cmd: "/usr/bin/hx" if cmd == "hx" else None)
+    install.setup_helix_as_editor()
+    for name in (".profile", ".bashrc"):
+        f = tmp_path / name
+        assert f.exists()
+        assert "export EDITOR=hx" in f.read_text()
+
+
+def test_setup_helix_as_editor_skips_if_already_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(install.shutil, "which", lambda cmd: "/usr/bin/hx" if cmd == "hx" else None)
+    install.setup_helix_as_editor()
+    contents_after_first = {n: (tmp_path / n).read_text() for n in (".profile", ".bashrc")}
+    install.setup_helix_as_editor()
+    for name, content in contents_after_first.items():
+        assert (tmp_path / name).read_text() == content
+
+
+def test_setup_helix_as_editor_skips_when_hx_not_installed(tmp_path, monkeypatch):
+    monkeypatch.setattr(install.shutil, "which", lambda cmd: None)
+    install.setup_helix_as_editor()
+    assert not (tmp_path / ".profile").exists()
+    assert not (tmp_path / ".bashrc").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -648,6 +678,109 @@ def test_compute_hints_incus_not_in_container_unaffected(monkeypatch):
     selected, hint = hints["incus"]
     assert selected is True   # install_check returns False → not installed → keep selected
     assert hint is None
+
+
+# ---------------------------------------------------------------------------
+# head_state_label
+# ---------------------------------------------------------------------------
+
+def test_head_state_label_pending_shows_spinner_and_ext():
+    label = install.head_state_label(install.Pending(frame=0))
+    assert "ext" in label
+    assert install._SPINNER[0] in label
+
+def test_head_state_label_pending_advances_frame():
+    label0 = install.head_state_label(install.Pending(frame=0))
+    label1 = install.head_state_label(install.Pending(frame=1))
+    assert label0 != label1
+
+def test_head_state_label_at_head_contains_sha_head_and_tick():
+    label = install.head_state_label(install.AtHead(short_sha="a1b2c3d"))
+    assert "ext" in label
+    assert "HEAD" in label
+    assert "a1b2c3d" in label
+    assert "✓" in label
+    assert "green" in label
+
+def test_head_state_label_behind_contains_sha_update_hint_and_question_mark():
+    label = install.head_state_label(install.Behind(short_sha="a1b2c3d"))
+    assert "ext" in label
+    assert "HEAD" not in label
+    assert "a1b2c3d" in label
+    assert "update available" in label
+    assert "?" in label
+    assert "yellow" in label
+
+def test_head_state_label_check_failed_shows_ext_and_question_mark():
+    label = install.head_state_label(install.CheckFailed())
+    assert "ext" in label
+    assert "?" in label
+
+
+# ---------------------------------------------------------------------------
+# check_remote_head
+# ---------------------------------------------------------------------------
+
+def TEST_check_remote_head_returns_at_head_when_shas_match(monkeypatch):
+    sha = "a" * 40
+    monkeypatch.setattr(install.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": f"{sha}\tHEAD\n"})())
+    result = install.check_remote_head("https://example.com/repo.git", sha)
+    assert isinstance(result, install.AtHead)
+    assert result.short_sha == sha[:7]
+
+def TEST_check_remote_head_returns_behind_when_shas_differ(monkeypatch):
+    pinned = "a" * 40
+    remote = "b" * 40
+    monkeypatch.setattr(install.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": f"{remote}\tHEAD\n"})())
+    result = install.check_remote_head("https://example.com/repo.git", pinned)
+    assert isinstance(result, install.Behind)
+    assert result.short_sha == pinned[:7]
+
+def TEST_check_remote_head_returns_failed_on_nonzero_exit(monkeypatch):
+    monkeypatch.setattr(install.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 1, "stdout": ""})())
+    result = install.check_remote_head("https://example.com/repo.git", "a" * 40)
+    assert isinstance(result, install.CheckFailed)
+
+def TEST_check_remote_head_returns_failed_on_empty_output(monkeypatch):
+    monkeypatch.setattr(install.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": ""})())
+    result = install.check_remote_head("https://example.com/repo.git", "a" * 40)
+    assert isinstance(result, install.CheckFailed)
+
+
+# ---------------------------------------------------------------------------
+# external install_check (symlink verification)
+# ---------------------------------------------------------------------------
+
+def TEST_external_install_check_true_when_symlink_points_into_cache(tmp_path):
+    sha = "abc123"
+    cache_dir = tmp_path / ".local" / "share" / "dev-installer" / "external" / "tok" / sha
+    cache_dir.mkdir(parents=True)
+    target = cache_dir / "tok.py"
+    target.touch()
+    bin_path = tmp_path / ".local" / "bin" / "tok"
+    bin_path.parent.mkdir(parents=True)
+    bin_path.symlink_to(target)
+    check = lambda b=bin_path, d=cache_dir: b.is_symlink() and b.resolve().is_relative_to(d)
+    assert check() is True
+
+def TEST_external_install_check_false_when_symlink_points_to_different_sha(tmp_path):
+    old_cache = tmp_path / ".local" / "share" / "dev-installer" / "external" / "tok" / "oldsha"
+    new_cache = tmp_path / ".local" / "share" / "dev-installer" / "external" / "tok" / "newsha"
+    old_cache.mkdir(parents=True)
+    new_cache.mkdir(parents=True)
+    target = old_cache / "tok.py"
+    target.touch()
+    bin_path = tmp_path / ".local" / "bin" / "tok"
+    bin_path.parent.mkdir(parents=True)
+    bin_path.symlink_to(target)
+    check = lambda b=bin_path, d=new_cache: b.is_symlink() and b.resolve().is_relative_to(d)
+    assert check() is False
+
+def TEST_external_install_check_false_when_not_installed(tmp_path):
+    cache_dir = tmp_path / ".local" / "share" / "dev-installer" / "external" / "tok" / "abc123"
+    bin_path  = tmp_path / ".local" / "bin" / "tok"
+    check = lambda b=bin_path, d=cache_dir: b.is_symlink() and b.resolve().is_relative_to(d)
+    assert check() is False
 
 
 if __name__ == "__main__":

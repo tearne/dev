@@ -17,6 +17,7 @@ import re
 import shutil
 import getpass
 import difflib
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from contextlib import contextmanager
@@ -39,6 +40,8 @@ class InstallItem:
     parent: str | None = None  # group name or item id; None = top-level
     requires: list[str] = field(default_factory=list)
     external: bool = False
+    external_url: str | None = None
+    external_sha: str | None = None
     default_selected: bool = True
     install_check: str | Callable[[], bool] | None = None
     deselect_hint: str | None = None
@@ -69,12 +72,18 @@ def _load_external_items() -> list[InstallItem]:
         sha        = entry["sha"]
         entrypoint = entry["entrypoint"]
         name       = entry.get("rename") or Path(entrypoint).stem
+        cache_dir = Path.home() / ".local" / "share" / "dev-installer" / "external" / name / sha
+        bin_path  = Path.home() / ".local" / "bin" / name
         items.append(InstallItem(
             id=name,
             installer=lambda u=url, s=sha, e=entrypoint, n=name: install_external_script(u, s, e, n),
             parent="System",
             external=True,
-            install_check=name,
+            external_url=url,
+            external_sha=sha,
+            install_check=lambda b=bin_path, d=cache_dir: (
+                b.is_symlink() and b.resolve().is_relative_to(d)
+            ),
         ))
     return items
 
@@ -219,6 +228,7 @@ def install(items: list[InstallItem], selected: set[str]) -> None:
         if item.id in selected:
             item.installer()
     setup_local_bin_path()
+    setup_helix_as_editor()
 
 
 # ---------------------------------------------------------------------------
@@ -511,16 +521,29 @@ def install_ruff():
         log("done")
 
 
+def append_to_shell_configs(line: str) -> None:
+    targets = [Path.home() / ".profile", Path.home() / ".bashrc"]
+    if all(t.exists() and line in t.read_text() for t in targets):
+        log("already configured")
+        return
+    for target in targets:
+        if not target.exists() or line not in target.read_text():
+            with target.open("a") as f:
+                f.write(f"\n# Added by install.py\n{line}\n")
+            log(f"appended to {target.name}")
+
+
 def setup_local_bin_path():
     with task("~/.local/bin on PATH"):
-        profile = Path.home() / ".profile"
-        marker = 'PATH="$HOME/.local/bin:$PATH"'
-        if profile.exists() and marker in profile.read_text():
-            log("already configured")
-            return
-        with profile.open("a") as f:
-            f.write(f'\n# Added by install.py\nexport {marker}\n')
-        log(f"appended to {profile}")
+        append_to_shell_configs('export PATH="$HOME/.local/bin:$PATH"')
+
+
+def setup_helix_as_editor():
+    if not is_installed("hx"):
+        return
+    with task("helix as $EDITOR"):
+        append_to_shell_configs("export EDITOR=hx")
+
 
 
 def install_external_script(url: str, sha: str, entrypoint: str, name: str):
@@ -586,6 +609,55 @@ def _collect_ancestors(node_id: str, parent_of: dict, group_names: set) -> list[
 
 
 # ---------------------------------------------------------------------------
+# External dependency head-check state
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Pending:
+    frame: int = 0
+
+@dataclass
+class AtHead:
+    short_sha: str
+
+@dataclass
+class Behind:
+    short_sha: str
+
+@dataclass
+class CheckFailed:
+    pass
+
+HeadCheckState = Pending | AtHead | Behind | CheckFailed
+
+_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+# Width of the widest indicator form " [ext a1b2c3 update available] ?" = 33
+_INDICATOR_WIDTH = 33
+
+
+def head_state_label(state: HeadCheckState) -> str:
+    if isinstance(state, Pending):
+        return f"[dim]\\[ext {_SPINNER[state.frame % len(_SPINNER)]}][/dim]"
+    if isinstance(state, AtHead):
+        return f"[dim]\\[ext {state.short_sha} HEAD [/dim][green]✓[/green][dim]][/dim]"
+    if isinstance(state, Behind):
+        return f"[dim]\\[ext {state.short_sha} update available [/dim][yellow]?[/yellow][dim]][/dim]"
+    return "[dim]\\[ext ?][/dim]"
+
+
+def check_remote_head(url: str, pinned_sha: str) -> HeadCheckState:
+    result = subprocess.run(
+        f"git ls-remote {url} HEAD",
+        shell=True, capture_output=True, text=True
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return CheckFailed()
+    remote_sha = result.stdout.split()[0]
+    short_sha = pinned_sha[:7]
+    return AtHead(short_sha) if remote_sha == pinned_sha else Behind(short_sha)
+
+
+# ---------------------------------------------------------------------------
 # TUI
 # ---------------------------------------------------------------------------
 
@@ -627,7 +699,7 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group], hints: dic
                     return True
         return False
 
-    def _make_selections() -> list[Selection]:
+    def _make_selections(head_states: dict[str, HeadCheckState]) -> list[Selection]:
         # Pass 1: collect ordered nodes and compute max item label width.
         ordered: list[tuple[str, bool, int]] = []
         def collect(node_id: str, is_group: bool, depth: int) -> None:
@@ -640,7 +712,9 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group], hints: dic
         def visual_width(node_id: str, depth: int) -> int:
             item = next((i for i in items if i.id == node_id), None)
             base = len("  " * depth) + len(node_id)
-            return base + len(" [ext]") if item and item.external else base
+            if item and item.external:
+                return base + _INDICATOR_WIDTH
+            return base
 
         max_width = max(
             (visual_width(nid, d) for nid, is_group, d in ordered if not is_group),
@@ -660,11 +734,15 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group], hints: dic
             else:
                 item = next((i for i in items if i.id == node_id), None)
                 selected, hint = hints.get(node_id, (item.default_selected if item else True, None))
-                label = f"{indent}{node_id} [dim]\\[ext][/dim]" if item and item.external else f"{indent}{node_id}"
+                if item and item.external:
+                    state = head_states.get(node_id, Pending())
+                    label = f"{indent}{node_id} {head_state_label(state)}"
+                else:
+                    label = f"{indent}{node_id}"
                 if hint:
                     pad = " " * (max_width - visual_width(node_id, depth) + 2)
                     label += f"{pad}[dim]{hint}[/dim]"
-                entries.append(Selection(label, node_id, initial_state=selected))
+                entries.append(Selection(label, node_id, initial_state=selected, id=node_id))
         return entries
 
     class InstallerApp(App):
@@ -687,15 +765,52 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group], hints: dic
             super().__init__()
             self._result: set[str] | None = None
             self._user_selected: set[str] = {item.id for item in items if hints.get(item.id, (item.default_selected, None))[0]}
+            self._head_states: dict[str, HeadCheckState] = {
+                item.id: Pending() for item in items if item.external
+            }
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
-            yield SelectionList(*_make_selections(), id="menu")
+            yield SelectionList(*_make_selections(self._head_states), id="menu")
             yield Static("space/click toggle  ↑↓/jk navigate  enter install  q quit", id="hints")
             yield Footer()
 
         def on_mount(self) -> None:
             self.title = "Dev Environment Setup"
+            external_items = [item for item in items if item.external and item.external_url and item.external_sha]
+            if external_items:
+                self.set_interval(0.1, self._tick_spinners)
+                for item in external_items:
+                    threading.Thread(
+                        target=self._run_head_check,
+                        args=(item.id, item.external_url, item.external_sha),
+                        daemon=True,
+                    ).start()
+
+        def _run_head_check(self, item_id: str, url: str, sha: str) -> None:
+            state = check_remote_head(url, sha)
+            self.call_from_thread(self._on_head_check_done, item_id, state)
+
+        def _on_head_check_done(self, item_id: str, state: HeadCheckState) -> None:
+            self._head_states[item_id] = state
+            self._refresh_external_label(item_id)
+
+        def _tick_spinners(self) -> None:
+            for item_id, state in self._head_states.items():
+                if isinstance(state, Pending):
+                    self._head_states[item_id] = Pending(frame=state.frame + 1)
+                    self._refresh_external_label(item_id)
+
+        def _refresh_external_label(self, item_id: str) -> None:
+            state = self._head_states[item_id]
+            depth, current = 0, item_id
+            while parent_of.get(current) is not None:
+                depth += 1
+                current = parent_of[current]
+            indent = "  " * depth
+            label = f"{indent}{item_id} {head_state_label(state)}"
+            sl: SelectionList = self.query_one("#menu")
+            sl.replace_option_prompt(item_id, label)
 
         def on_selection_list_selection_toggled(
             self, event: SelectionList.SelectionToggled

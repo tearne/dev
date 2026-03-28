@@ -1,3 +1,3 @@
 # Active Change
-**Name**: rust-analyzer-check
-**Type**: Fix
+**Name**: external-dep-update-hint
+**Type**: Proposal
