@@ -1,6 +1,6 @@
 # Ensure Config Refactor
 **Type**: Fix
-**Status**: Draft
+**Status**: Approved
 
 ## Log
 

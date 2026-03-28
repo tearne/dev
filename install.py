@@ -44,6 +44,7 @@ class InstallItem:
     external_sha: str | None = None
     default_selected: bool = True
     install_check: str | Callable[[], bool] | None = None
+    configure: Callable[[], None] | None = None
     deselect_hint: str | None = None
     uses_sudo: bool = False
 
@@ -109,7 +110,7 @@ def _items() -> list[InstallItem]:
         InstallItem("delta",               install_delta,               parent="Git",      requires=["cargo-binstall"], install_check="delta"),
         InstallItem("difft",               install_difft,               parent="Git",      requires=["cargo-binstall"], install_check="difft"),
         # Helix
-        InstallItem("helix",               install_helix,               parent="Helix",    install_check="hx",            uses_sudo=True),
+        InstallItem("helix",               install_helix,               parent="Helix",    install_check="hx",            uses_sudo=True, configure=setup_helix_as_editor),
         InstallItem("biome",               install_biome,               parent="helix",    install_check="biome"),
         InstallItem("harper-ls",           install_harper_ls,           parent="helix",    requires=["cargo-binstall"], install_check="harper-ls"),
         InstallItem("markdown-oxide",      install_markdown_oxide,      parent="helix",    requires=["cargo-binstall"], install_check="markdown-oxide"),
@@ -228,7 +229,9 @@ def install(items: list[InstallItem], selected: set[str]) -> None:
         if item.id in selected:
             item.installer()
     setup_local_bin_path()
-    setup_helix_as_editor()
+    for item in items:
+        if item.configure and _check_installed(item.install_check):
+            item.configure()
 
 
 # ---------------------------------------------------------------------------
@@ -521,16 +524,21 @@ def install_ruff():
         log("done")
 
 
-def append_to_shell_configs(line: str) -> None:
+def append_to_shell_configs(line: str, conflict: str | None = None) -> None:
     targets = [Path.home() / ".profile", Path.home() / ".bashrc"]
     if all(t.exists() and line in t.read_text() for t in targets):
         log("already configured")
         return
     for target in targets:
-        if not target.exists() or line not in target.read_text():
-            with target.open("a") as f:
-                f.write(f"\n# Added by install.py\n{line}\n")
-            log(f"appended to {target.name}")
+        text = target.read_text() if target.exists() else ""
+        if line in text:
+            continue
+        if conflict and conflict in text:
+            log(f"skipping {target.name} — existing {conflict!r} config found")
+            continue
+        with target.open("a") as f:
+            f.write(f"\n# Added by install.py\n{line}\n")
+        log(f"appended to {target.name}")
 
 
 def setup_local_bin_path():
@@ -539,10 +547,8 @@ def setup_local_bin_path():
 
 
 def setup_helix_as_editor():
-    if not is_installed("hx"):
-        return
     with task("helix as $EDITOR"):
-        append_to_shell_configs("export EDITOR=hx")
+        append_to_shell_configs("export EDITOR=hx", conflict="EDITOR=")
 
 
 

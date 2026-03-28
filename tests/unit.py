@@ -497,8 +497,7 @@ def test_setup_local_bin_path_skips_if_already_present(tmp_path):
 # setup_helix_as_editor
 # ---------------------------------------------------------------------------
 
-def test_setup_helix_as_editor_appends_to_profile_and_bashrc(tmp_path, monkeypatch):
-    monkeypatch.setattr(install.shutil, "which", lambda cmd: "/usr/bin/hx" if cmd == "hx" else None)
+def test_setup_helix_as_editor_appends_to_profile_and_bashrc(tmp_path):
     install.setup_helix_as_editor()
     for name in (".profile", ".bashrc"):
         f = tmp_path / name
@@ -506,8 +505,7 @@ def test_setup_helix_as_editor_appends_to_profile_and_bashrc(tmp_path, monkeypat
         assert "export EDITOR=hx" in f.read_text()
 
 
-def test_setup_helix_as_editor_skips_if_already_present(tmp_path, monkeypatch):
-    monkeypatch.setattr(install.shutil, "which", lambda cmd: "/usr/bin/hx" if cmd == "hx" else None)
+def test_setup_helix_as_editor_skips_if_already_present(tmp_path):
     install.setup_helix_as_editor()
     contents_after_first = {n: (tmp_path / n).read_text() for n in (".profile", ".bashrc")}
     install.setup_helix_as_editor()
@@ -515,11 +513,37 @@ def test_setup_helix_as_editor_skips_if_already_present(tmp_path, monkeypatch):
         assert (tmp_path / name).read_text() == content
 
 
-def test_setup_helix_as_editor_skips_when_hx_not_installed(tmp_path, monkeypatch):
-    monkeypatch.setattr(install.shutil, "which", lambda cmd: None)
+def test_setup_helix_as_editor_skips_file_with_existing_editor_config(tmp_path):
+    (tmp_path / ".bashrc").write_text("export EDITOR=vim\n")
     install.setup_helix_as_editor()
-    assert not (tmp_path / ".profile").exists()
-    assert not (tmp_path / ".bashrc").exists()
+    assert "EDITOR=hx" not in (tmp_path / ".bashrc").read_text()
+    assert "export EDITOR=hx" in (tmp_path / ".profile").read_text()
+
+
+# ---------------------------------------------------------------------------
+# configure callback
+# ---------------------------------------------------------------------------
+
+def test_configure_called_for_installed_item_after_install_loop(tmp_path):
+    called = []
+    noop = lambda: None
+    item = install.InstallItem("present", noop, install_check=lambda: True, configure=lambda: called.append("present"))
+    install.install([item], set())
+    assert "present" in called
+
+
+def test_configure_not_called_when_install_check_fails(tmp_path):
+    called = []
+    noop = lambda: None
+    item = install.InstallItem("absent", noop, install_check=lambda: False, configure=lambda: called.append("absent"))
+    install.install([item], set())
+    assert called == []
+
+
+def test_configure_not_called_when_no_configure_set(tmp_path):
+    noop = lambda: None
+    item = install.InstallItem("present", noop, install_check=lambda: True)
+    install.install([item], set())  # should not raise
 
 
 # ---------------------------------------------------------------------------
