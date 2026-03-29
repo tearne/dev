@@ -1,5 +1,5 @@
 # Proposal: Host-Based Integration Test
-**Status: Ready for Review**
+**Status: Approved**
 
 ## Intent
 The existing integration test (`tests/integration.sh`) requires nested Incus containers, which
@@ -28,5 +28,14 @@ installation paths — everything that doesn't need root — without any contain
 - Items always exercised: `ruff`, `biome`, `tok`, git config, PATH setup, config symlinks.
 
 ## Scope
-- **In scope**: replacing the Incus-based test with a host-based test.
-- **Out of scope**: keeping or archiving `tests/integration.sh` (to be decided at design time).
+- **In scope**: replacing the Incus-based test with a host-based test. `tests/integration.sh` will be removed.
+- **Out of scope**: restoring container-based coverage.
+
+## Limitations
+
+By retiring the container-based test, the following are no longer verified by automated testing:
+
+- **apt/sudo installs**: `htop`, `btop`, `wl-clipboard`, `xclip`, `incus`, `unattended-upgrades`, `all-upgrades`, and `helix` (via `dpkg`) are untested end-to-end.
+- **Clean OS baseline**: the host test cannot guarantee a clean starting state; pre-existing tools on the host may mask installation failures.
+- **Rust toolchain and dependents**: `rust`, `rust-analyzer`, `cargo-binstall`, `zellij`, `delta`, `difft`, `harper-ls`, `markdown-oxide` are only exercised if `build-essential` is already present on the host.
+- **Full PATH and shell config integration**: `.profile` and `.bashrc` are written to a temp directory and never sourced, so shell integration is not exercised end-to-end.
