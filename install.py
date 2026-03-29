@@ -575,12 +575,16 @@ def install_external_script(url: str, sha: str, entrypoint: str, name: str):
         src = cache_dir / entrypoint
         dst = Path.home() / ".local" / "bin" / name
         dst.parent.mkdir(parents=True, exist_ok=True)
+        installer_cache = Path.home() / ".local" / "share" / "dev-installer" / "external"
         if dst.is_symlink() or dst.exists():
             if dst.is_symlink() and dst.resolve() == src.resolve():
                 log("symlink already correct")
                 return
             if dst.is_symlink() and not dst.exists():
                 log(f"replacing dangling symlink {dst}")
+                dst.unlink()
+            elif dst.is_symlink() and dst.resolve().is_relative_to(installer_cache):
+                log(f"replacing installer-managed symlink {dst}")
                 dst.unlink()
             else:
                 warn(f"{dst} already exists, not overwriting")
