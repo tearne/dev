@@ -50,6 +50,7 @@ All latest stable versions. Items are organised into a visual tree in the TUI. E
 [Git]
   delta (git-delta) — syntax-highlighted git diff pager; exposes git dd and git dl aliases
   difft (difftastic) — structural diff tool; exposes git dft alias
+  grit — structured code review TUI; presents a persistent per-file review checklist across git refs
 [Helix]
   helix (hx)
     biome — JSON language server
@@ -95,13 +96,13 @@ regardless of the position of items in `_items()`.
 - The already-initialised check runs with sudo, so it works correctly for users not in the `incus-admin` group.
 
 ### External Scripts
-- Scripts from external repositories can be registered for installation. Only explicitly
-  approved, pinned versions are ever installed; updating a pin is a deliberate, reviewable
-  change to this repository.
+- `external_scripts.toml` is the canonical registry for all pinned git dependencies, regardless of build method — compiled binaries and script symlinks alike. Bespoke constants or install functions in `install.py` are not an acceptable alternative.
+- External items can be registered for installation. Only explicitly approved, pinned versions are ever installed; updating a pin is a deliberate, reviewable change to this repository.
 - If an approved version has already been fetched, installation proceeds without network access.
 - The installer verifies what was fetched matches the approved version before installing.
+- Script entries and compiled binary entries follow the same fetch-verify-symlink pattern. Compiled entries additionally run `cargo build --release` after verification, then prune `target/` leaving only the binary, before symlinking `target/release/<name>` into `~/.local/bin/`. The symlink resolving into the versioned cache directory is the install check for both entry types.
 - External items appear in the TUI marked with `[ext]` alongside built-in items.
-- `tok` (encrypted secret manager) is installed this way from `github.com/tearne/tok`.
+- `tok` (encrypted secret manager) is installed as a script from `github.com/tearne/tok`; `grit` is installed as a compiled binary from its repository.
 
 ### Configuration
 - `~/.local/bin/` is on the user's `PATH` in new terminals.
@@ -136,6 +137,7 @@ regardless of the position of items in `_items()`.
   - **`cargo binstall`**: `cargo-binstall`, `zellij` (`zellij`), `delta`
     (`git-delta`), `difft` (`difftastic`), `harper-ls`; `markdown-oxide` uses
     `--git` (not on crates.io)
+  - **fetch + `cargo build --release` + symlink**: `grit` (pinned SHA from `external_scripts.toml`; not on crates.io)
   - **GitHub releases**: `helix` (latest stable `.deb`); `biome`
     (arch-appropriate binary → `~/.local/bin/`)
   - **`uv tool install`**: `pyright`, `ruff`
@@ -153,7 +155,7 @@ regardless of the position of items in `_items()`.
 │   ├── unit.py          # Unit tests (no container required)
 │   └── integration.sh   # Incus integration test harness
 ├── bootstrap_inst.sh    # Bash entry point, bootstraps uv
-├── external_scripts.toml  # Registry of approved external script sources
+├── external_scripts.toml  # Registry of all approved pinned git dependencies (scripts and compiled binaries)
 ├── install.py           # Python logic (uv single-file script)
 ```
 

@@ -3,3 +3,8 @@ url        = "https://github.com/tearne/tok.git"
 sha        = "a9516fd0320fd64530ad0e4dbf7be49c9d255b11"
 entrypoint = "tok.py"
 rename     = "tok"
+
+[[script]]
+url   = "https://github.com/tearne/grit"
+sha   = "f9f1b1f6bd4dacc28fc52826a5a36be9e32ca324"
+build = "cargo"

@@ -69,23 +69,41 @@ def _load_external_items() -> list[InstallItem]:
         data = tomllib.load(f)
     items = []
     for entry in data.get("script", []):
-        url        = entry["url"]
-        sha        = entry["sha"]
-        entrypoint = entry["entrypoint"]
-        name       = entry.get("rename") or Path(entrypoint).stem
-        cache_dir = Path.home() / ".local" / "share" / "dev-installer" / "external" / name / sha
-        bin_path  = Path.home() / ".local" / "bin" / name
-        items.append(InstallItem(
-            id=name,
-            installer=lambda u=url, s=sha, e=entrypoint, n=name: install_external_script(u, s, e, n),
-            parent="System",
-            external=True,
-            external_url=url,
-            external_sha=sha,
-            install_check=lambda b=bin_path, d=cache_dir: (
-                b.is_symlink() and b.resolve().is_relative_to(d)
-            ),
-        ))
+        url   = entry["url"]
+        sha   = entry["sha"]
+        build = entry.get("build", "script")
+        if build == "cargo":
+            name      = entry.get("rename") or Path(url.rstrip("/")).stem.removesuffix(".git")
+            bin_path  = Path.home() / ".local" / "bin" / name
+            cache_dir = Path.home() / ".local" / "share" / "dev-installer" / "external" / name / sha
+            items.append(InstallItem(
+                id=name,
+                installer=lambda u=url, s=sha, n=name: install_external_cargo(u, s, n),
+                parent="Git",
+                requires=["rustup"],
+                external=True,
+                external_url=url,
+                external_sha=sha,
+                install_check=lambda b=bin_path, d=cache_dir: (
+                    b.is_symlink() and b.resolve().is_relative_to(d)
+                ),
+            ))
+        else:
+            entrypoint = entry["entrypoint"]
+            name       = entry.get("rename") or Path(entrypoint).stem
+            cache_dir  = Path.home() / ".local" / "share" / "dev-installer" / "external" / name / sha
+            bin_path   = Path.home() / ".local" / "bin" / name
+            items.append(InstallItem(
+                id=name,
+                installer=lambda u=url, s=sha, e=entrypoint, n=name: install_external_script(u, s, e, n),
+                parent="System",
+                external=True,
+                external_url=url,
+                external_sha=sha,
+                install_check=lambda b=bin_path, d=cache_dir: (
+                    b.is_symlink() and b.resolve().is_relative_to(d)
+                ),
+            ))
     return items
 
 
@@ -573,6 +591,58 @@ def install_external_script(url: str, sha: str, entrypoint: str, name: str):
             sys.exit(1)
 
         src = cache_dir / entrypoint
+        dst = Path.home() / ".local" / "bin" / name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        installer_cache = Path.home() / ".local" / "share" / "dev-installer" / "external"
+        if dst.is_symlink() or dst.exists():
+            if dst.is_symlink() and dst.resolve() == src.resolve():
+                log("symlink already correct")
+                return
+            if dst.is_symlink() and not dst.exists():
+                log(f"replacing dangling symlink {dst}")
+                dst.unlink()
+            elif dst.is_symlink() and dst.resolve().is_relative_to(installer_cache):
+                log(f"replacing installer-managed symlink {dst}")
+                dst.unlink()
+            else:
+                warn(f"{dst} already exists, not overwriting")
+                return
+        rel = os.path.relpath(src, dst.parent)
+        os.symlink(rel, dst)
+        log(f"symlinked {dst} -> {rel}")
+
+
+def install_external_cargo(url: str, sha: str, name: str):
+    with task(name):
+        cache_dir = Path.home() / ".local" / "share" / "dev-installer" / "external" / name / sha
+        binary = cache_dir / "target" / "release" / name
+
+        if not cache_dir.exists():
+            with task("fetching"):
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                run(f"git -C {cache_dir} init -q")
+                run(f"git -C {cache_dir} remote add origin {url}")
+                run(f"git -C {cache_dir} fetch --depth=1 -q origin {sha}")
+                run(f"git -C {cache_dir} checkout -q {sha}")
+
+        actual = subprocess.run(
+            f"git -C {cache_dir} rev-parse HEAD",
+            shell=True, capture_output=True, text=True,
+        ).stdout.strip()
+        if actual != sha:
+            log(f"FAILED: SHA mismatch — expected {sha}, got {actual}")
+            sys.exit(1)
+
+        if not binary.exists():
+            with task("building"):
+                run(f"cargo build --release --manifest-path {cache_dir}/Cargo.toml")
+            tmp = cache_dir / f"_{name}_tmp"
+            shutil.move(str(binary), str(tmp))
+            shutil.rmtree(cache_dir / "target")
+            (cache_dir / "target" / "release").mkdir(parents=True)
+            shutil.move(str(tmp), str(binary))
+
+        src = binary
         dst = Path.home() / ".local" / "bin" / name
         dst.parent.mkdir(parents=True, exist_ok=True)
         installer_cache = Path.home() / ".local" / "share" / "dev-installer" / "external"

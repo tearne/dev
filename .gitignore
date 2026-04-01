@@ -1,3 +1,6 @@
 __pycache__
 venv-*
 install.log
+CLAUDE.md
+planner/
+builder/
