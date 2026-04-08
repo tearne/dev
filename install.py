@@ -1082,10 +1082,13 @@ def rustup_component_installed(component: str) -> Callable[[], bool]:
     # shutil.which finds the rustup proxy regardless of whether the component
     # is actually installed, so we must query rustup directly.
     def check():
-        result = subprocess.run(
-            ["rustup", "component", "list", "--installed"],
-            capture_output=True, text=True
-        )
+        try:
+            result = subprocess.run(
+                ["rustup", "component", "list", "--installed"],
+                capture_output=True, text=True
+            )
+        except FileNotFoundError:
+            return False
         return any(line.startswith(component) for line in result.stdout.splitlines())
     return check
 
