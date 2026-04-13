@@ -24,7 +24,7 @@ from pathlib import Path
 from contextlib import contextmanager
 from typing import Callable
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 # ---------------------------------------------------------------------------
 # Item model and registry
@@ -1240,16 +1240,11 @@ def _print_item_list(items: list[InstallItem]) -> None:
     Console().print(table)
 
 
-def collect_git_user_info(items: list[InstallItem], user_selected: set[str] | None) -> None:
-    """Prompt for git user.name and email before the menu when git-config will run and either is unset."""
+def collect_git_user_info(selected: set[str]) -> None:
+    """Prompt for git user.name and email when git-config is selected and either is unset."""
     global _git_user_name, _git_user_email
 
-    if user_selected is None:
-        will_configure = not git_config_install_check()
-    else:
-        will_configure = "git-config" in resolve_selection(items, user_selected)
-
-    if not will_configure:
+    if "git-config" not in selected:
         return
 
     name = git_config_setting("user.name")
@@ -1270,7 +1265,6 @@ def main():
     items = _items()
     groups = _groups()
     user_selected = _parse_args(items)
-    collect_git_user_info(items, user_selected)
 
     if user_selected is None:
         user_selected = run_selection_menu(items, groups, compute_item_hints(items))
@@ -1291,6 +1285,8 @@ def main():
         selected = resolve_selection(items, user_selected)
         for item_id in sorted(selected - user_selected):
             warn(f"auto-added {item_id} (required dependency)")
+
+    collect_git_user_info(selected)
 
     _logfile = (SCRIPT_DIR / "install.log").open("w")
     atexit.register(_logfile.close)

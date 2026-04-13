@@ -107,7 +107,7 @@ regardless of the position of items in `_items()`.
 - `tok` (encrypted secret manager) is installed as a script from `github.com/tearne/tok`; `grit` is installed as a compiled binary from its repository.
 
 ### Git Identity Prompt
-If `git-config` is selected at the start of the run and either `user.name` or `user.email` is absent from global git config, the installer prompts for the missing values before the menu is shown. The prompt message makes clear these are for git configuration only. Values already present are left unchanged; `pull.rebase false` is set silently without prompting.
+If `git-config` is in the final selection and either `user.name` or `user.email` is absent from global git config, the installer prompts for the missing values after selection is confirmed and before installation begins. The prompt message makes clear these are for git configuration only. Values already present are left unchanged; `pull.rebase false` is set silently without prompting.
 
 ### Configuration
 - `~/.local/bin/` is on the user's `PATH` in new terminals.
