@@ -6,5 +6,5 @@ rename     = "tok"
 
 [[script]]
 url   = "https://github.com/tearne/grit"
-sha   = "f9f1b1f6bd4dacc28fc52826a5a36be9e32ca324"
+sha   = "4f0f94098fe7878b21452c3648d89f2053659075"
 build = "cargo"

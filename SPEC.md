@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project contains items to help set up a development environment on Ubuntu/Debian
+This project contains items to help set up a development environment on Ubuntu/Debian on x86_64 and ARM64 (aarch64 / Raspberry Pi 5)
 - a script to install basic dev tools
 - config files to install
 - helper scripts (e.g. a tool to hold encrypted tokens)
@@ -35,7 +35,7 @@ All latest stable versions. Items are organised into a visual tree in the TUI. E
 ```
 [System]
   [Resource]
-    htop, btop
+    htop, btop, tree
   [Clipboard]
     wl-clipboard — pre-selected when a Wayland session is detected
     xclip — pre-selected when an X11 session is detected
@@ -48,6 +48,8 @@ All latest stable versions. Items are organised into a visual tree in the TUI. E
     rust-analyzer
     cargo-binstall
 [Git]
+  git — apt; makes the dependency explicit
+  git-config — sets user.name, user.email, and pull.rebase=false; pre-selected when any are absent; requires git
   delta (git-delta) — syntax-highlighted git diff pager; exposes git dd and git dl aliases
   difft (difftastic) — structural diff tool; exposes git dft alias
   grit — structured code review TUI; presents a persistent per-file review checklist across git refs
@@ -104,6 +106,9 @@ regardless of the position of items in `_items()`.
 - External items appear in the TUI marked with `[ext]` alongside built-in items.
 - `tok` (encrypted secret manager) is installed as a script from `github.com/tearne/tok`; `grit` is installed as a compiled binary from its repository.
 
+### Git Identity Prompt
+If `git-config` is selected at the start of the run and either `user.name` or `user.email` is absent from global git config, the installer prompts for the missing values before the menu is shown. The prompt message makes clear these are for git configuration only. Values already present are left unchanged; `pull.rebase false` is set silently without prompting.
+
 ### Configuration
 - `~/.local/bin/` is on the user's `PATH` in new terminals.
 - Config files are symlinked (relative paths) from the resources folder, so the project can be checked out anywhere.
@@ -129,7 +134,7 @@ regardless of the position of items in `_items()`.
 - POS style (see `DEFINITIONS.md`). Python 3.12, `uv` as runtime; `uv`
   bootstrapped via `curl`. Approved third-party dependencies: `textual`, `rich`.
 - Installation method by tool:
-  - **apt** (non-interactive, no PPA): `htop`, `btop`, `wl-clipboard`, `xclip`,
+  - **apt** (non-interactive, no PPA): `htop`, `btop`, `tree`, `git`, `wl-clipboard`, `xclip`,
     `incus`, `unattended-upgrades`; `libatomic1` (pyright runtime dep);
     `build-essential` (rust build dep)
   - **RustUp** (via `curl`): `rust`
@@ -138,7 +143,7 @@ regardless of the position of items in `_items()`.
     (`git-delta`), `difft` (`difftastic`), `harper-ls`; `markdown-oxide` uses
     `--git` (not on crates.io)
   - **fetch + `cargo build --release` + symlink**: `grit` (pinned SHA from `external_scripts.toml`; not on crates.io)
-  - **GitHub releases**: `helix` (latest stable `.deb`); `biome`
+  - **GitHub releases**: `helix` (latest stable `.deb`; arch-appropriate: `amd64` or `arm64`); `biome`
     (arch-appropriate binary → `~/.local/bin/`)
   - **`uv tool install`**: `pyright`, `ruff`
 - `install_rust()` unconditionally adds `~/.cargo/bin` to the process PATH, regardless of whether rust was already installed. `ensure_cargo_binstall()` calls `install_rust()` before checking or installing `cargo-binstall`, making it the primary enforcement point that guarantees `cargo` is on PATH before any `cargo binstall` invocation.

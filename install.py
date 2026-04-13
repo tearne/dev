@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --script
+#!/usr/bin/env -S uv run --script --
 # /// script
 # requires-python = "==3.12.*"
 # dependencies = [
@@ -17,11 +17,14 @@ import re
 import shutil
 import getpass
 import difflib
+import shlex
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Callable
+
+VERSION = "1.0.1"
 
 # ---------------------------------------------------------------------------
 # Item model and registry
@@ -113,6 +116,7 @@ def _items() -> list[InstallItem]:
         # System
         InstallItem("htop",                install_htop,                parent="Resource", install_check="htop",          uses_sudo=True),
         InstallItem("btop",                install_btop,                parent="Resource", install_check="btop",          uses_sudo=True),
+        InstallItem("tree",                install_tree,                parent="Resource", install_check="tree",          uses_sudo=True),
         InstallItem("wl-clipboard",        install_wl_clipboard,        parent="Clipboard", default_selected=(session == "wayland"), install_check="wl-copy", deselect_hint="wayland not detected", uses_sudo=True),
         InstallItem("xclip",               install_xclip,               parent="Clipboard", default_selected=(session == "x11"),      install_check="xclip",   deselect_hint="x11 not detected",     uses_sudo=True),
         InstallItem("unattended-upgrades", install_unattended_upgrades, parent="System",   install_check="unattended-upgrades",       uses_sudo=True),
@@ -125,6 +129,8 @@ def _items() -> list[InstallItem]:
         InstallItem("rust-analyzer",       install_rust_analyzer,       parent="rustup",   requires=["rustup"],           install_check=rustup_component_installed("rust-analyzer")),
         InstallItem("cargo-binstall",      install_cargo_binstall,      parent="rustup",   requires=["rustup"],           install_check="cargo-binstall"),
         # Git
+        InstallItem("git",                 install_git,                 parent="Git",      install_check="git",                     uses_sudo=True),
+        InstallItem("git-config",          install_git_config,          parent="Git",      requires=["git"], install_check=git_config_install_check, default_selected=True),
         InstallItem("delta",               install_delta,               parent="Git",      requires=["cargo-binstall"], install_check="delta"),
         InstallItem("difft",               install_difft,               parent="Git",      requires=["cargo-binstall"], install_check="difft"),
         # Helix
@@ -276,6 +282,16 @@ def install_btop():
         log("done")
 
 
+def install_tree():
+    with task("tree"):
+        if is_installed("tree"):
+            log("already installed, skipping")
+            return
+        ensure_apt_updated()
+        sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tree")
+        log("done")
+
+
 def install_wl_clipboard():
     with task("wl-clipboard"):
         if is_installed("wl-copy"):
@@ -410,6 +426,34 @@ def install_zellij():
         log("done")
 
 
+def git_config_install_check() -> bool:
+    return all(
+        git_config_setting(k) is not None
+        for k in ("user.name", "user.email", "pull.rebase")
+    )
+
+
+def install_git():
+    with task("git"):
+        if is_installed("git"):
+            log("already installed, skipping")
+            return
+        ensure_apt_updated()
+        sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git")
+        log("done")
+
+
+def install_git_config():
+    with task("git-config"):
+        if git_config_setting("user.name") is None:
+            run(f"git config --global user.name {shlex.quote(_git_user_name)}")
+        if git_config_setting("user.email") is None:
+            run(f"git config --global user.email {shlex.quote(_git_user_email)}")
+        if git_config_setting("pull.rebase") is None:
+            run("git config --global pull.rebase false")
+        log("done")
+
+
 def install_delta():
     with task("delta"):
         if is_installed("delta"):
@@ -447,7 +491,8 @@ def install_helix():
             return
 
         with task("downloading latest .deb"):
-            run(r"""curl -s https://api.github.com/repos/helix-editor/helix/releases/latest | grep -oP '"browser_download_url": "\K[^"]*amd64\.deb' | xargs curl -Lo /tmp/helix.deb""")
+            arch = "arm64" if platform.machine() == "aarch64" else "amd64"
+            run(f"""curl -s https://api.github.com/repos/helix-editor/helix/releases/latest | grep -oP '"browser_download_url": "\\K[^"]*{arch}\\.deb' | xargs curl -Lo /tmp/helix.deb""")
 
         with task("installing"):
             sudo("dpkg -i /tmp/helix.deb")
@@ -943,6 +988,8 @@ _password = None
 _warnings = []
 _logfile = None
 _apt_updated = False
+_git_user_name: str | None = None
+_git_user_email: str | None = None
 _ansi_re = re.compile(r"\033\[[0-9;]*m")  # strip ANSI escapes for log file
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -1003,7 +1050,7 @@ def _stream_output(proc):
 def run(cmd):
     log(f"\033[2m$ {cmd}\033[0m")
     proc = subprocess.Popen(
-        cmd, shell=True, text=True,
+        f"set -o pipefail && {cmd}", shell=True, executable="/bin/bash", text=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
     _stream_output(proc)
@@ -1059,19 +1106,30 @@ def init_password():
         return
     if subprocess.run("sudo -n true", shell=True, capture_output=True).returncode == 0:
         return
-    _password = getpass.getpass("Enter sudo password: ")
-    result = subprocess.run(
-        "sudo -S true", shell=True, text=True,
-        input=_password + "\n",
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-    )
-    if result.returncode != 0:
-        print("Error: incorrect password.")
-        sys.exit(1)
+    for attempt in range(3):
+        _password = getpass.getpass("Enter sudo password: ")
+        result = subprocess.run(
+            "sudo -S true", shell=True, text=True,
+            input=_password + "\n",
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        if result.returncode == 0:
+            return
+        print("Incorrect password, try again." if attempt < 2 else "")
+    print("Error: too many incorrect attempts.")
+    sys.exit(1)
 
 
 def is_installed(cmd):
     return shutil.which(cmd) is not None
+
+
+def git_config_setting(key: str) -> str | None:
+    result = subprocess.run(
+        f"git config --global {key}",
+        shell=True, capture_output=True, text=True
+    )
+    return result.stdout.strip() or None
 
 
 def path_exists(path: str) -> Callable[[], bool]:
@@ -1119,6 +1177,7 @@ def _parse_args(items: list[InstallItem]) -> set[str] | None:
         description="Dev environment installer",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     parser.add_argument(
         "-l", "--list", dest="list", action="store_true",
         help="list available items and exit",
@@ -1181,12 +1240,37 @@ def _print_item_list(items: list[InstallItem]) -> None:
     Console().print(table)
 
 
+def collect_git_user_info(items: list[InstallItem], user_selected: set[str] | None) -> None:
+    """Prompt for git user.name and email before the menu when git-config will run and either is unset."""
+    global _git_user_name, _git_user_email
+
+    if user_selected is None:
+        will_configure = not git_config_install_check()
+    else:
+        will_configure = "git-config" in resolve_selection(items, user_selected)
+
+    if not will_configure:
+        return
+
+    name = git_config_setting("user.name")
+    email = git_config_setting("user.email")
+    if name is not None and email is not None:
+        return
+
+    print("Git identity (for git configuration only):")
+    if name is None:
+        _git_user_name = input("  user.name: ").strip()
+    if email is None:
+        _git_user_email = input("  user.email: ").strip()
+
+
 def main():
     global _logfile
 
     items = _items()
     groups = _groups()
     user_selected = _parse_args(items)
+    collect_git_user_info(items, user_selected)
 
     if user_selected is None:
         user_selected = run_selection_menu(items, groups, compute_item_hints(items))
