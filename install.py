@@ -24,7 +24,7 @@ from pathlib import Path
 from contextlib import contextmanager
 from typing import Callable
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 # ---------------------------------------------------------------------------
 # Item model and registry
