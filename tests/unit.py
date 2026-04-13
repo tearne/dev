@@ -169,7 +169,7 @@ def test_external_script_replaces_installer_managed_symlink(tmp_path, monkeypatc
     assert len(install._warnings) == 0
 
 
-def test_external_script_does_not_replace_unrelated_symlink(tmp_path, monkeypatch):
+def test_external_script_replaces_unrelated_symlink(tmp_path, monkeypatch):
     _make_cache(tmp_path, "tok", SHA)
     _stub_git_sha(monkeypatch, SHA)
     dst = tmp_path / ".local" / "bin" / "tok"
@@ -179,19 +179,20 @@ def test_external_script_does_not_replace_unrelated_symlink(tmp_path, monkeypatc
     elsewhere.write_text("unrelated")
     dst.symlink_to(elsewhere)
     install.install_external_script("https://example.com/tok.git", SHA, "tok.py", "tok")
-    assert dst.resolve() == elsewhere.resolve()
-    assert len(install._warnings) == 1
+    assert dst.is_symlink()
+    assert dst.resolve() != elsewhere.resolve()
+    assert len(install._warnings) == 0
 
 
-def test_external_script_does_not_overwrite_real_file(tmp_path, monkeypatch):
+def test_external_script_replaces_real_file(tmp_path, monkeypatch):
     _make_cache(tmp_path, "tok", SHA)
     _stub_git_sha(monkeypatch, SHA)
     dst = tmp_path / ".local" / "bin" / "tok"
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text("existing content")
     install.install_external_script("https://example.com/tok.git", SHA, "tok.py", "tok")
-    assert dst.read_text() == "existing content"
-    assert len(install._warnings) == 1
+    assert dst.is_symlink()
+    assert len(install._warnings) == 0
 
 
 def test_external_script_aborts_on_sha_mismatch(tmp_path, monkeypatch):

@@ -650,8 +650,8 @@ def install_external_script(url: str, sha: str, entrypoint: str, name: str):
                 log(f"replacing installer-managed symlink {dst}")
                 dst.unlink()
             else:
-                warn(f"{dst} already exists, not overwriting")
-                return
+                log(f"replacing existing {dst}")
+                dst.unlink()
         rel = os.path.relpath(src, dst.parent)
         os.symlink(rel, dst)
         log(f"symlinked {dst} -> {rel}")
@@ -702,8 +702,8 @@ def install_external_cargo(url: str, sha: str, name: str):
                 log(f"replacing installer-managed symlink {dst}")
                 dst.unlink()
             else:
-                warn(f"{dst} already exists, not overwriting")
-                return
+                log(f"replacing existing {dst}")
+                dst.unlink()
         rel = os.path.relpath(src, dst.parent)
         os.symlink(rel, dst)
         log(f"symlinked {dst} -> {rel}")
