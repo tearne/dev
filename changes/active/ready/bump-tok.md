@@ -1,0 +1,13 @@
+# Bump tok Dependency
+
+## Intent
+
+Update the pinned version of the `tok` external script to the latest available commit so the project picks up any recent fixes and improvements.
+
+## Approach
+
+Update the `sha` field for the `tok` entry in `external_scripts.toml` from `a9516fd0320fd64530ad0e4dbf7be49c9d255b11` to `e95a277d176f664485e5806e6c05768af3470e03`.
+
+## Plan
+
+- [ ] UPDATE `external_scripts.toml`: change the `tok` entry's `sha` from `a9516fd0320fd64530ad0e4dbf7be49c9d255b11` to `e95a277d176f664485e5806e6c05768af3470e03`
