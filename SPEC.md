@@ -57,7 +57,7 @@ All latest stable versions. Items are organised into a visual tree in the TUI. E
   helix (hx)
     biome — JSON language server
     harper-ls
-    markdown-oxide — Markdown language server (replaces marksman)
+    marksman — Markdown language server
     pyright
     ruff
 ```
@@ -70,7 +70,7 @@ Item interdependencies:
 - Install-order dependencies are declared via `requires` on `InstallItem`. `parent` is visual-only and does not imply an install dependency.
 - `requires` links are resolved at confirmation time (Enter): if items were added to satisfy dependencies, an apt-style summary is shown and the user is prompted to confirm before installation begins.
 - For non-interactive invocations (`--all`/`--only`/`--skip`), auto-resolved dependencies emit a warning to stdout and the log.
-- `zellij`, `delta`, `difft`, `harper-ls`, and `markdown-oxide` require `cargo-binstall`; `rust-analyzer` and `cargo-binstall` require `rust`; `all-upgrades` requires `unattended-upgrades`.
+- `zellij`, `delta`, `difft`, and `harper-ls` require `cargo-binstall`; `rust-analyzer` and `cargo-binstall` require `rust`; `all-upgrades` requires `unattended-upgrades`.
 
 ### Installation Order
 
@@ -84,7 +84,7 @@ order is required.
 3. **rust** (rustup/rustc/cargo) — must precede `cargo-binstall` and `rust-analyzer`,
    which depend on it. `install_rust()` also adds `~/.cargo/bin` to the process PATH.
 4. **cargo-binstall** — must precede all items installed via `cargo binstall`
-   (`zellij`, `delta`, `difft`, `harper-ls`, `markdown-oxide`).
+   (`zellij`, `delta`, `difft`, `harper-ls`).
 5. **Remaining items** — no fixed relative order required among themselves.
 
 Stages 2–4 are enforced at runtime by `ensure_cargo_binstall()`, which calls
@@ -140,11 +140,10 @@ If `git-config` is in the final selection and either `user.name` or `user.email`
   - **RustUp** (via `curl`): `rust`
   - **`rustup component add`**: `rust-analyzer`
   - **`cargo binstall`**: `cargo-binstall`, `zellij` (`zellij`), `delta`
-    (`git-delta`), `difft` (`difftastic`), `harper-ls`; `markdown-oxide` uses
-    `--git` (not on crates.io)
+    (`git-delta`), `difft` (`difftastic`), `harper-ls`
   - **fetch + `cargo build --release` + symlink**: `grit` (pinned SHA from `external_scripts.toml`; not on crates.io)
   - **GitHub releases**: `helix` (latest stable `.deb`; arch-appropriate: `amd64` or `arm64`); `biome`
-    (arch-appropriate binary → `~/.local/bin/`)
+    (arch-appropriate binary → `~/.local/bin/`); `marksman` (arch-appropriate binary → `~/.local/bin/`)
   - **`uv tool install`**: `pyright`, `ruff`
 - `install_rust()` unconditionally adds `~/.cargo/bin` to the process PATH, regardless of whether rust was already installed. `ensure_cargo_binstall()` calls `install_rust()` before checking or installing `cargo-binstall`, making it the primary enforcement point that guarantees `cargo` is on PATH before any `cargo binstall` invocation.
 - Git configured via `git config --global` for `delta` (`alias.dd`,
@@ -215,7 +214,7 @@ Two test layers:
 ### Integration Test Scenarios (`tests/integration.sh`)
 - Tool installation:
   - Installation completes without error.
-  - Each tool is callable: `htop`, `btop`, `incus`, `rustc`, `cargo`, `zellij`, `hx`, `harper-ls`, `pyright`, `ruff`.
+  - Each tool is callable: `htop`, `btop`, `incus`, `rustc`, `cargo`, `zellij`, `hx`, `harper-ls`, `marksman`, `pyright`, `ruff`.
   - `rustc` compiles and links a minimal program successfully (verifying `build-essential` is present, not just that the toolchain is on PATH).
   - `pyright --version` executes successfully (verifying the Node.js runtime loads, not just that the wrapper script is on PATH).
 - Symlinks:

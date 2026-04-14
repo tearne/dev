@@ -13,17 +13,17 @@ args = ["--stdio"]
 command = "ruff"
 args = ["server"]
 
-[language-server.markdown-oxide]
-command = "markdown-oxide"
+[[language]]
+name = "python"
+language-servers = ["pyright", "ruff"]
+
+[language-server.marksman]
+command = "marksman"
 
 [[language]]
 name = "markdown"
 soft-wrap.enable = true
-language-servers = ["markdown-oxide", "harper-ls"]
-
-[[language]]
-name = "python"
-language-servers = ["pyright", "ruff"]
+language-servers = ["marksman", "harper-ls"]
 
 [language-server.biome]
 command = "biome"

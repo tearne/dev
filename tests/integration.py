@@ -23,7 +23,7 @@ ALWAYS_SKIP = {
 }
 SKIP_WITHOUT_GCC = {
     "build-essential", "rust", "rust-analyzer", "cargo-binstall",
-    "zellij", "delta", "difft", "harper-ls", "markdown-oxide",
+    "zellij", "delta", "difft", "harper-ls",
 }
 SKIP_WITHOUT_LIBATOMIC = {"pyright"}
 
