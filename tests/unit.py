@@ -19,8 +19,9 @@ import install
 
 @pytest.fixture(autouse=True)
 def reset_install_state(tmp_path, monkeypatch):
-    """Redirect HOME to tmp_path and reset module globals before each test."""
+    """Redirect HOME and TMPDIR to tmp_path and reset module globals before each test."""
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     install._warnings.clear()
     install._indent = 0
 
@@ -739,9 +740,8 @@ def test_compute_hints_incus_not_in_container_unaffected(monkeypatch):
 # head_state_label
 # ---------------------------------------------------------------------------
 
-def test_head_state_label_pending_shows_spinner_and_ext():
+def test_head_state_label_pending_shows_spinner():
     label = install.head_state_label(install.Pending(frame=0))
-    assert "ext" in label
     assert install._SPINNER[0] in label
 
 def test_head_state_label_pending_advances_frame():
@@ -749,26 +749,23 @@ def test_head_state_label_pending_advances_frame():
     label1 = install.head_state_label(install.Pending(frame=1))
     assert label0 != label1
 
-def test_head_state_label_at_head_contains_sha_head_and_tick():
-    label = install.head_state_label(install.AtHead(short_sha="a1b2c3d"))
-    assert "ext" in label
+def test_head_state_label_at_head_contains_label_head_and_tick():
+    label = install.head_state_label(install.AtHead(label="ext a1b2c3d"))
+    assert "ext a1b2c3d" in label
     assert "HEAD" in label
-    assert "a1b2c3d" in label
     assert "✓" in label
     assert "green" in label
 
-def test_head_state_label_behind_contains_sha_update_hint_and_question_mark():
-    label = install.head_state_label(install.Behind(short_sha="a1b2c3d"))
-    assert "ext" in label
+def test_head_state_label_behind_contains_label_update_hint_and_question_mark():
+    label = install.head_state_label(install.Behind(label="ext a1b2c3d"))
+    assert "ext a1b2c3d" in label
     assert "HEAD" not in label
-    assert "a1b2c3d" in label
     assert "update available" in label
     assert "?" in label
     assert "yellow" in label
 
-def test_head_state_label_check_failed_shows_ext_and_question_mark():
+def test_head_state_label_check_failed_shows_question_mark():
     label = install.head_state_label(install.CheckFailed())
-    assert "ext" in label
     assert "?" in label
 
 
@@ -781,7 +778,7 @@ def TEST_check_remote_head_returns_at_head_when_shas_match(monkeypatch):
     monkeypatch.setattr(install.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": f"{sha}\tHEAD\n"})())
     result = install.check_remote_head("https://example.com/repo.git", sha)
     assert isinstance(result, install.AtHead)
-    assert result.short_sha == sha[:7]
+    assert result.label == f"ext {sha[:7]}"
 
 def TEST_check_remote_head_returns_behind_when_shas_differ(monkeypatch):
     pinned = "a" * 40
@@ -789,7 +786,7 @@ def TEST_check_remote_head_returns_behind_when_shas_differ(monkeypatch):
     monkeypatch.setattr(install.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": f"{remote}\tHEAD\n"})())
     result = install.check_remote_head("https://example.com/repo.git", pinned)
     assert isinstance(result, install.Behind)
-    assert result.short_sha == pinned[:7]
+    assert result.label == f"ext {pinned[:7]}"
 
 def TEST_check_remote_head_returns_failed_on_nonzero_exit(monkeypatch):
     monkeypatch.setattr(install.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 1, "stdout": ""})())
@@ -836,6 +833,260 @@ def TEST_external_install_check_false_when_not_installed(tmp_path):
     bin_path  = tmp_path / ".local" / "bin" / "tok"
     check = lambda b=bin_path, d=cache_dir: b.is_symlink() and b.resolve().is_relative_to(d)
     assert check() is False
+
+
+# ---------------------------------------------------------------------------
+# Tarball release installs
+# ---------------------------------------------------------------------------
+
+import io
+import re as _re
+import shutil as _shutil
+import subprocess as _sp
+import tarfile as _tarfile
+
+
+def _make_test_tarball(path: Path, top_dir: str, binary_name: str) -> None:
+    """Build a minimal tar.xz with structure: top_dir/binary_name (executable)."""
+    content = b"#!/bin/sh\necho ok\n"
+    with _tarfile.open(path, "w:xz") as tf:
+        d = _tarfile.TarInfo(top_dir)
+        d.type = _tarfile.DIRTYPE
+        d.mode = 0o755
+        tf.addfile(d)
+        b = _tarfile.TarInfo(f"{top_dir}/{binary_name}")
+        b.size = len(content)
+        b.mode = 0o755
+        tf.addfile(b, io.BytesIO(content))
+
+
+def _stub_release(monkeypatch, tmp_path: Path, repo: str, version: str, top_dir: str, binary: str) -> Path:
+    """Stub the GitHub API + curl download so install_tarball_release runs without network.
+
+    Returns the path of the prepared archive (also written by the fake `run`)."""
+    archive_src = tmp_path / "_release_archive.tar.xz"
+    _make_test_tarball(archive_src, top_dir, binary)
+    api_json = (
+        f'{{"tag_name": "{version}", '
+        f'"assets": [{{"browser_download_url": "https://example.com/{top_dir}.tar.xz"}}], '
+        f'"browser_download_url": "https://example.com/{top_dir}.tar.xz"}}'
+    )
+    real_run = _sp.run
+
+    def fake_subprocess_run(cmd, **kwargs):
+        if isinstance(cmd, str) and "api.github.com" in cmd and repo in cmd:
+            return _sp.CompletedProcess(cmd, 0, stdout=api_json, stderr="")
+        if isinstance(cmd, str) and "dpkg -l" in cmd:
+            return _sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return real_run(cmd, **kwargs)
+    monkeypatch.setattr(install.subprocess, "run", fake_subprocess_run)
+
+    def fake_install_run(cmd):
+        match = _re.search(r"-o\s+(\S+)", cmd)
+        if match:
+            _shutil.copy(archive_src, Path(match.group(1)))
+    monkeypatch.setattr(install, "run", fake_install_run)
+    return archive_src
+
+
+# _tarball_state_dir / installed_tarball_version
+
+def test_tarball_state_dir_under_home(tmp_path):
+    assert install._tarball_state_dir("foo") == tmp_path / ".local" / "share" / "dev-installer" / "tarball" / "foo"
+
+
+def test_installed_tarball_version_returns_none_when_absent(tmp_path):
+    assert install.installed_tarball_version("foo") is None
+
+
+def test_installed_tarball_version_returns_none_when_state_dir_empty(tmp_path):
+    install._tarball_state_dir("foo").mkdir(parents=True)
+    assert install.installed_tarball_version("foo") is None
+
+
+def test_installed_tarball_version_returns_version_when_one_dir(tmp_path):
+    (install._tarball_state_dir("foo") / "1.2.3").mkdir(parents=True)
+    assert install.installed_tarball_version("foo") == "1.2.3"
+
+
+def test_installed_tarball_version_returns_lex_last_when_multiple_dirs(tmp_path):
+    base = install._tarball_state_dir("foo")
+    (base / "1.2.3").mkdir(parents=True)
+    (base / "1.2.4").mkdir(parents=True)
+    assert install.installed_tarball_version("foo") == "1.2.4"
+
+
+# check_release_version
+
+def _stub_release_api(monkeypatch, tag_name: str | None, returncode: int = 0, stdout_override: str | None = None):
+    if stdout_override is not None:
+        stdout = stdout_override
+    elif tag_name is None:
+        stdout = "{}"
+    else:
+        stdout = f'{{"tag_name": "{tag_name}"}}'
+    monkeypatch.setattr(install.subprocess, "run",
+        lambda *a, **kw: _sp.CompletedProcess(a[0], returncode, stdout=stdout, stderr=""))
+
+
+def test_check_release_version_returns_failed_when_installed_is_none(monkeypatch):
+    _stub_release_api(monkeypatch, "1.0.0")
+    result = install.check_release_version("owner/repo", None)
+    assert isinstance(result, install.CheckFailed)
+
+
+def test_check_release_version_returns_at_head_when_versions_match(monkeypatch):
+    _stub_release_api(monkeypatch, "1.0.0")
+    result = install.check_release_version("owner/repo", "1.0.0")
+    assert isinstance(result, install.AtHead)
+    assert result.label == "1.0.0"
+
+
+def test_check_release_version_returns_behind_with_version_pair_label(monkeypatch):
+    _stub_release_api(monkeypatch, "1.0.1")
+    result = install.check_release_version("owner/repo", "1.0.0")
+    assert isinstance(result, install.Behind)
+    assert "1.0.0" in result.label and "1.0.1" in result.label
+
+
+def test_check_release_version_returns_failed_on_curl_nonzero(monkeypatch):
+    _stub_release_api(monkeypatch, None, returncode=1, stdout_override="")
+    result = install.check_release_version("owner/repo", "1.0.0")
+    assert isinstance(result, install.CheckFailed)
+
+
+def test_check_release_version_returns_failed_when_no_tag_name(monkeypatch):
+    _stub_release_api(monkeypatch, None, stdout_override='{"name": "no tag"}')
+    result = install.check_release_version("owner/repo", "1.0.0")
+    assert isinstance(result, install.CheckFailed)
+
+
+# _link_tarball_binary — regression test for the symlink-naming bug
+
+def test_link_tarball_binary_uses_binary_name_not_arbitrary_name(tmp_path):
+    target = tmp_path / "extracted"
+    target.mkdir()
+    (target / "hx").write_text("binary content")
+    install._link_tarball_binary(target, "hx")
+    assert (tmp_path / ".local" / "bin" / "hx").is_symlink()
+    assert not (tmp_path / ".local" / "bin" / "helix").exists()
+
+
+def test_link_tarball_binary_idempotent_when_correct(tmp_path):
+    target = tmp_path / "extracted"
+    target.mkdir()
+    (target / "hx").write_text("binary")
+    install._link_tarball_binary(target, "hx")
+    install._link_tarball_binary(target, "hx")
+    assert (tmp_path / ".local" / "bin" / "hx").is_symlink()
+
+
+def test_link_tarball_binary_replaces_stale_symlink(tmp_path):
+    target = tmp_path / "extracted"
+    target.mkdir()
+    (target / "hx").write_text("binary")
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "hx").symlink_to("/nonexistent/path")
+    install._link_tarball_binary(target, "hx")
+    assert (bin_dir / "hx").resolve() == (target / "hx").resolve()
+
+
+# _warn_if_dpkg_helix_present
+
+def test_warn_if_dpkg_helix_present_silent_when_no_system_install(monkeypatch):
+    monkeypatch.setattr(install.subprocess, "run",
+        lambda *a, **kw: _sp.CompletedProcess(a[0], 1, stdout="", stderr=""))
+    install._warn_if_dpkg_helix_present()
+    assert not install._warnings
+
+
+def test_warn_if_dpkg_helix_present_warns_when_dpkg_lists_helix(monkeypatch):
+    monkeypatch.setattr(install.subprocess, "run",
+        lambda *a, **kw: _sp.CompletedProcess(a[0], 0, stdout="helix\n", stderr=""))
+    install._warn_if_dpkg_helix_present()
+    assert install._warnings
+    assert any("apt remove helix" in msg for msg, _diff in install._warnings)
+
+
+# install_tarball_release end-to-end
+
+def test_install_tarball_release_creates_state_dir_and_symlink(tmp_path, monkeypatch):
+    top_dir = f"helix-25.07.1-{install.platform.machine()}-linux"
+    _stub_release(monkeypatch, tmp_path, "helix-editor/helix", "25.07.1", top_dir, "hx")
+    install.install_tarball_release(
+        name="helix",
+        repo="helix-editor/helix",
+        asset_pattern="{arch}-linux.tar.xz",
+        binary="hx",
+    )
+    state = tmp_path / ".local" / "share" / "dev-installer" / "tarball" / "helix" / "25.07.1"
+    assert state.is_dir()
+    assert (state / "hx").is_file()
+    bin_link = tmp_path / ".local" / "bin" / "hx"
+    assert bin_link.is_symlink()
+    assert bin_link.resolve() == (state / "hx").resolve()
+
+
+def test_install_tarball_release_no_op_when_already_at_latest(tmp_path, monkeypatch):
+    top_dir = f"helix-25.07.1-{install.platform.machine()}-linux"
+    _stub_release(monkeypatch, tmp_path, "helix-editor/helix", "25.07.1", top_dir, "hx")
+    state = tmp_path / ".local" / "share" / "dev-installer" / "tarball" / "helix" / "25.07.1"
+    state.mkdir(parents=True)
+    (state / "hx").write_text("placeholder")
+
+    run_calls = []
+    real_run = install.run
+    def tracking_run(cmd):
+        run_calls.append(cmd)
+        return real_run(cmd)
+    monkeypatch.setattr(install, "run", tracking_run)
+
+    install.install_tarball_release(
+        name="helix",
+        repo="helix-editor/helix",
+        asset_pattern="{arch}-linux.tar.xz",
+        binary="hx",
+    )
+    assert not any("curl" in c for c in run_calls)
+    assert (state / "hx").read_text() == "placeholder"  # untouched
+
+
+def test_install_tarball_release_replaces_prior_version(tmp_path, monkeypatch):
+    top_dir = f"helix-25.07.1-{install.platform.machine()}-linux"
+    _stub_release(monkeypatch, tmp_path, "helix-editor/helix", "25.07.1", top_dir, "hx")
+    base = tmp_path / ".local" / "share" / "dev-installer" / "tarball" / "helix"
+    old = base / "25.07.0"
+    old.mkdir(parents=True)
+    (old / "hx").write_text("old")
+
+    install.install_tarball_release(
+        name="helix",
+        repo="helix-editor/helix",
+        asset_pattern="{arch}-linux.tar.xz",
+        binary="hx",
+    )
+    assert not old.exists()
+    assert (base / "25.07.1" / "hx").is_file()
+
+
+def test_install_tarball_release_does_not_touch_real_home(tmp_path, monkeypatch):
+    """Belt-and-braces: every artefact lands strictly under tmp_path."""
+    real_home = Path.home()
+    assert real_home == tmp_path  # fixture invariant
+    top_dir = f"helix-25.07.1-{install.platform.machine()}-linux"
+    _stub_release(monkeypatch, tmp_path, "helix-editor/helix", "25.07.1", top_dir, "hx")
+    install.install_tarball_release(
+        name="helix",
+        repo="helix-editor/helix",
+        asset_pattern="{arch}-linux.tar.xz",
+        binary="hx",
+    )
+    # Nothing leaked above tmp_path.
+    assert all(p.is_relative_to(tmp_path) for p in [
+        Path.home() / ".local" / "bin" / "hx",
+        install._tarball_state_dir("helix"),
+    ])
 
 
 if __name__ == "__main__":

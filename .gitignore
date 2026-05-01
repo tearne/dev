@@ -4,3 +4,4 @@ install.log
 CLAUDE.md
 changes/agents/
 supervisor_start.py
+changes/agent/

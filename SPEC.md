@@ -142,7 +142,7 @@ If `git-config` is in the final selection and either `user.name` or `user.email`
   - **`cargo binstall`**: `cargo-binstall`, `zellij` (`zellij`), `delta`
     (`git-delta`), `difft` (`difftastic`), `harper-ls`
   - **fetch + `cargo build --release` + symlink**: `grit` (pinned SHA from `external_scripts.toml`; not on crates.io)
-  - **GitHub releases**: `helix` (latest stable `.deb`; arch-appropriate: `amd64` or `arm64`); `biome`
+  - **GitHub releases**: `helix` (latest stable `tar.xz`; arch-appropriate: `aarch64-linux` or `x86_64-linux`; extracted to `~/.local/share/dev-installer/tarball/helix/<version>/`, with `hx` symlinked into `~/.local/bin/`); `biome`
     (arch-appropriate binary → `~/.local/bin/`); `marksman` (arch-appropriate binary → `~/.local/bin/`)
   - **`uv tool install`**: `pyright`, `ruff`
 - `install_rust()` unconditionally adds `~/.cargo/bin` to the process PATH, regardless of whether rust was already installed. `ensure_cargo_binstall()` calls `install_rust()` before checking or installing `cargo-binstall`, making it the primary enforcement point that guarantees `cargo` is on PATH before any `cargo binstall` invocation.

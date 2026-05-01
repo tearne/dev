@@ -18,13 +18,15 @@ import shutil
 import getpass
 import difflib
 import shlex
+import tarfile
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Callable
 
-VERSION = "1.0.4"
+VERSION = "1.1.0"
 
 # ---------------------------------------------------------------------------
 # Item model and registry
@@ -45,6 +47,7 @@ class InstallItem:
     external: bool = False
     external_url: str | None = None
     external_sha: str | None = None
+    release_repo: str | None = None  # owner/name on GitHub; triggers release-version check
     default_selected: bool = True
     install_check: str | Callable[[], bool] | None = None
     configure: Callable[[], None] | None = None
@@ -134,7 +137,7 @@ def _items() -> list[InstallItem]:
         InstallItem("delta",               install_delta,               parent="Git",      requires=["cargo-binstall"], install_check="delta"),
         InstallItem("difft",               install_difft,               parent="Git",      requires=["cargo-binstall"], install_check="difft"),
         # Helix
-        InstallItem("helix",               install_helix,               parent="Helix",    install_check="hx",            uses_sudo=True, configure=setup_helix_as_editor),
+        InstallItem("helix",               install_helix,               parent="Helix",    install_check="hx",            release_repo="helix-editor/helix", configure=setup_helix_as_editor),
         InstallItem("biome",               install_biome,               parent="helix",    install_check="biome"),
         InstallItem("harper-ls",           install_harper_ls,           parent="helix",    requires=["cargo-binstall"], install_check="harper-ls"),
         InstallItem("marksman",            install_marksman,            parent="helix",    install_check="marksman"),
@@ -483,23 +486,109 @@ def install_difft():
         run("git config --global pager.difftool true")
 
 
+def install_tarball_release(name: str, repo: str, asset_pattern: str, binary: str) -> None:
+    """Install a GitHub release tarball into a versioned state dir under
+    ~/.local/share/dev-installer/tarball/<name>/<version>/, with ~/.local/bin/<name>
+    symlinked to the binary inside. Idempotent: no-op when already at the latest version.
+
+    asset_pattern is a substring matched against release asset URLs; "{arch}" is
+    substituted with platform.machine() (e.g. "aarch64", "x86_64"). Both .tar.xz
+    and .tar.gz are supported transparently."""
+    pattern = asset_pattern.format(arch=platform.machine())
+    api = subprocess.run(
+        f"curl -fsSL https://api.github.com/repos/{repo}/releases/latest",
+        shell=True, capture_output=True, text=True,
+    )
+    if api.returncode != 0 or not api.stdout.strip():
+        log(f"FAILED: could not query GitHub releases for {repo}")
+        sys.exit(1)
+    version_match = re.search(r'"tag_name"\s*:\s*"([^"]+)"', api.stdout)
+    if not version_match:
+        log(f"FAILED: no tag_name in release metadata for {repo}")
+        sys.exit(1)
+    version = version_match.group(1)
+
+    state_dir = _tarball_state_dir(name)
+    target_dir = state_dir / version
+    if target_dir.exists():
+        log(f"already at latest ({version})")
+        _link_tarball_binary(target_dir, binary)
+        return
+
+    asset_match = re.search(
+        rf'"browser_download_url"\s*:\s*"([^"]*{re.escape(pattern)}[^"]*)"',
+        api.stdout,
+    )
+    if not asset_match:
+        log(f"FAILED: no asset matching {pattern!r} in {repo} release {version}")
+        sys.exit(1)
+    url = asset_match.group(1)
+
+    with tempfile.NamedTemporaryFile(prefix=f"{name}-{version}-", suffix=".tarball", delete=False) as f:
+        archive = Path(f.name)
+    with task(f"downloading {version}"):
+        run(f"curl -fsSL -o {archive} {url}")
+
+    with task(f"extracting to {target_dir}"):
+        target_dir.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archive) as tf:
+            members = tf.getmembers()
+            if not members:
+                log(f"FAILED: empty archive {archive}")
+                sys.exit(1)
+            top = members[0].name.split("/", 1)[0]
+            prefix = f"{top}/"
+            for m in members:
+                if m.name == top:
+                    continue
+                if m.name.startswith(prefix):
+                    m.name = m.name[len(prefix):]
+                    tf.extract(m, target_dir, filter="data")
+        archive.unlink()
+
+    _link_tarball_binary(target_dir, binary)
+
+    for old in state_dir.iterdir():
+        if old.is_dir() and old.name != version:
+            log(f"removing previous version {old.name}")
+            shutil.rmtree(old)
+
+    log(f"installed {version}")
+
+
+def _link_tarball_binary(target_dir: Path, binary: str) -> None:
+    src = target_dir / binary
+    dst = Path.home() / ".local" / "bin" / Path(binary).name
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.is_symlink() or dst.exists():
+        if dst.is_symlink() and dst.resolve() == src.resolve():
+            return
+        dst.unlink()
+    dst.symlink_to(src)
+
+
 def install_helix():
     with task("Helix editor"):
-        if is_installed("hx"):
-            log("already installed, skipping")
-            _link_helix_config()
-            return
-
-        with task("downloading latest .deb"):
-            arch = "arm64" if platform.machine() == "aarch64" else "amd64"
-            run(f"""curl -s https://api.github.com/repos/helix-editor/helix/releases/latest | grep -oP '"browser_download_url": "\\K[^"]*{arch}\\.deb' | xargs curl -Lo /tmp/helix.deb""")
-
-        with task("installing"):
-            sudo("dpkg -i /tmp/helix.deb")
-            run("rm /tmp/helix.deb")
-            log("done")
-
+        _warn_if_dpkg_helix_present()
+        install_tarball_release(
+            name="helix",
+            repo="helix-editor/helix",
+            asset_pattern="{arch}-linux.tar.xz",
+            binary="hx",
+        )
         _link_helix_config()
+
+
+def _warn_if_dpkg_helix_present() -> None:
+    result = subprocess.run(
+        "dpkg -l helix 2>/dev/null | awk '/^ii/ {print $2}'",
+        shell=True, capture_output=True, text=True,
+    )
+    if result.stdout.strip() == "helix":
+        warn(
+            "system Helix detected (installed via apt). "
+            "~/.local/bin/hx will shadow it on PATH; consider 'sudo apt remove helix'."
+        )
 
 
 def _link_helix_config():
@@ -746,11 +835,11 @@ class Pending:
 
 @dataclass
 class AtHead:
-    short_sha: str
+    label: str
 
 @dataclass
 class Behind:
-    short_sha: str
+    label: str
 
 @dataclass
 class CheckFailed:
@@ -759,18 +848,19 @@ class CheckFailed:
 HeadCheckState = Pending | AtHead | Behind | CheckFailed
 
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-# Width of the widest indicator form " [ext a1b2c3 update available] ?" = 33
-_INDICATOR_WIDTH = 33
+# Sized for the widest indicator we render. Release-version pair labels
+# ("25.07.0 → 25.07.1") run longer than the original "ext a1b2c3".
+_INDICATOR_WIDTH = 44
 
 
 def head_state_label(state: HeadCheckState) -> str:
     if isinstance(state, Pending):
-        return f"[dim]\\[ext {_SPINNER[state.frame % len(_SPINNER)]}][/dim]"
+        return f"[dim]\\[{_SPINNER[state.frame % len(_SPINNER)]}][/dim]"
     if isinstance(state, AtHead):
-        return f"[dim]\\[ext {state.short_sha} HEAD [/dim][green]✓[/green][dim]][/dim]"
+        return f"[dim]\\[{state.label} HEAD [/dim][green]✓[/green][dim]][/dim]"
     if isinstance(state, Behind):
-        return f"[dim]\\[ext {state.short_sha} update available [/dim][yellow]?[/yellow][dim]][/dim]"
-    return "[dim]\\[ext ?][/dim]"
+        return f"[dim]\\[{state.label} update available [/dim][yellow]?[/yellow][dim]][/dim]"
+    return "[dim]\\[?][/dim]"
 
 
 def check_remote_head(url: str, pinned_sha: str) -> HeadCheckState:
@@ -781,8 +871,38 @@ def check_remote_head(url: str, pinned_sha: str) -> HeadCheckState:
     if result.returncode != 0 or not result.stdout.strip():
         return CheckFailed()
     remote_sha = result.stdout.split()[0]
-    short_sha = pinned_sha[:7]
-    return AtHead(short_sha) if remote_sha == pinned_sha else Behind(short_sha)
+    label = f"ext {pinned_sha[:7]}"
+    return AtHead(label) if remote_sha == pinned_sha else Behind(label)
+
+
+def _tarball_state_dir(name: str) -> Path:
+    return Path.home() / ".local" / "share" / "dev-installer" / "tarball" / name
+
+
+def installed_tarball_version(name: str) -> str | None:
+    base = _tarball_state_dir(name)
+    if not base.exists():
+        return None
+    versions = sorted(p.name for p in base.iterdir() if p.is_dir())
+    return versions[-1] if versions else None
+
+
+def check_release_version(repo: str, installed_version: str | None) -> HeadCheckState:
+    if installed_version is None:
+        return CheckFailed()
+    result = subprocess.run(
+        f"curl -fsSL https://api.github.com/repos/{repo}/releases/latest",
+        shell=True, capture_output=True, text=True
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return CheckFailed()
+    match = re.search(r'"tag_name"\s*:\s*"([^"]+)"', result.stdout)
+    if not match:
+        return CheckFailed()
+    latest = match.group(1)
+    if installed_version == latest:
+        return AtHead(installed_version)
+    return Behind(f"{installed_version} → {latest}")
 
 
 # ---------------------------------------------------------------------------
@@ -840,7 +960,7 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group], hints: dic
         def visual_width(node_id: str, depth: int) -> int:
             item = next((i for i in items if i.id == node_id), None)
             base = len("  " * depth) + len(node_id)
-            if item and item.external:
+            if item and (item.external or item.release_repo):
                 return base + _INDICATOR_WIDTH
             return base
 
@@ -862,7 +982,7 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group], hints: dic
             else:
                 item = next((i for i in items if i.id == node_id), None)
                 selected, hint = hints.get(node_id, (item.default_selected if item else True, None))
-                if item and item.external:
+                if item and (item.external or item.release_repo):
                     state = head_states.get(node_id, Pending())
                     label = f"{indent}{node_id} {head_state_label(state)}"
                 else:
@@ -894,7 +1014,7 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group], hints: dic
             self._result: set[str] | None = None
             self._user_selected: set[str] = {item.id for item in items if hints.get(item.id, (item.default_selected, None))[0]}
             self._head_states: dict[str, HeadCheckState] = {
-                item.id: Pending() for item in items if item.external
+                item.id: Pending() for item in items if item.external or item.release_repo
             }
 
         def compose(self) -> ComposeResult:
@@ -906,17 +1026,29 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group], hints: dic
         def on_mount(self) -> None:
             self.title = "Dev Environment Setup"
             external_items = [item for item in items if item.external and item.external_url and item.external_sha]
-            if external_items:
+            release_items = [item for item in items if item.release_repo]
+            if external_items or release_items:
                 self.set_interval(0.1, self._tick_spinners)
-                for item in external_items:
-                    threading.Thread(
-                        target=self._run_head_check,
-                        args=(item.id, item.external_url, item.external_sha),
-                        daemon=True,
-                    ).start()
+            for item in external_items:
+                threading.Thread(
+                    target=self._run_head_check,
+                    args=(item.id, item.external_url, item.external_sha),
+                    daemon=True,
+                ).start()
+            for item in release_items:
+                threading.Thread(
+                    target=self._run_release_check,
+                    args=(item.id, item.release_repo),
+                    daemon=True,
+                ).start()
 
         def _run_head_check(self, item_id: str, url: str, sha: str) -> None:
             state = check_remote_head(url, sha)
+            self.call_from_thread(self._on_head_check_done, item_id, state)
+
+        def _run_release_check(self, item_id: str, repo: str) -> None:
+            installed = installed_tarball_version(item_id)
+            state = check_release_version(repo, installed)
             self.call_from_thread(self._on_head_check_done, item_id, state)
 
         def _on_head_check_done(self, item_id: str, state: HeadCheckState) -> None:
