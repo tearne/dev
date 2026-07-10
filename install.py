@@ -26,7 +26,7 @@ from pathlib import Path
 from contextlib import contextmanager
 from typing import Callable
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 # ---------------------------------------------------------------------------
 # Item model and registry
@@ -50,6 +50,7 @@ class InstallItem:
     release_repo: str | None = None  # owner/name on GitHub; triggers release-version check
     default_selected: bool = True
     install_check: str | Callable[[], bool] | None = None
+    link_check: Callable[[], bool] | None = None  # True when managed links are healthy; None = not tracked
     configure: Callable[[], None] | None = None
     deselect_hint: str | None = None
     uses_sudo: bool = False
@@ -138,7 +139,7 @@ def _items() -> list[InstallItem]:
         InstallItem("delta",               install_delta,               parent="Git",      requires=["cargo-binstall"], install_check="delta"),
         InstallItem("difft",               install_difft,               parent="Git",      requires=["cargo-binstall"], install_check="difft"),
         # Helix
-        InstallItem("helix",               install_helix,               parent="Helix",    install_check="hx",            release_repo="helix-editor/helix", configure=setup_helix_as_editor),
+        InstallItem("helix",               install_helix,               parent="Helix",    install_check="hx",            release_repo="helix-editor/helix", configure=setup_helix_as_editor, link_check=helix_config_link_check),
         InstallItem("biome",               install_biome,               parent="helix",    install_check="biome"),
         InstallItem("harper-ls",           install_harper_ls,           parent="helix",    requires=["cargo-binstall"], install_check="harper-ls"),
         InstallItem("marksman",            install_marksman,            parent="helix",    install_check="marksman"),
@@ -241,7 +242,10 @@ def compute_item_hints(items: list[InstallItem]) -> dict[str, tuple[bool, str | 
         if item.id == "incus" and container:
             hints[item.id] = (False, "already in container")
         elif item.install_check is not None and _check_installed(item.install_check):
-            hints[item.id] = (False, "installed")
+            if item.link_check is not None and not item.link_check():
+                hints[item.id] = (False, "config broken — reselect to repair")
+            else:
+                hints[item.id] = (False, "installed")
         else:
             hint = item.deselect_hint if not item.default_selected else None
             hints[item.id] = (item.default_selected, hint)
@@ -671,6 +675,14 @@ def _link_helix_config():
             log(f"symlinked {dst} -> {rel}")
 
 
+def helix_config_link_check() -> bool:
+    for filename in ("config.toml", "languages.toml"):
+        dst = Path.home() / ".config" / "helix" / filename
+        if dst.is_symlink() and not dst.exists():
+            return False
+    return True
+
+
 def install_biome():
     with task("biome"):
         if is_installed("biome"):
@@ -998,29 +1010,29 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group], hints: dic
                     return True
         return False
 
+    # Static node order and label width — computed once, shared by the initial
+    # render and by later per-row label refreshes (async version-check results).
+    ordered: list[tuple[str, bool, int]] = []
+    def _collect(node_id: str, is_group: bool, depth: int) -> None:
+        ordered.append((node_id, is_group, depth))
+        for child_id, child_is_group in children_of.get(node_id, []):
+            _collect(child_id, child_is_group, depth + 1)
+    for node_id, is_group in children_of[None]:
+        _collect(node_id, is_group, 0)
+
+    def visual_width(node_id: str, depth: int) -> int:
+        item = next((i for i in items if i.id == node_id), None)
+        base = len("  " * depth) + len(node_id)
+        if item and (item.external or item.release_repo):
+            return base + _INDICATOR_WIDTH
+        return base
+
+    max_width = max(
+        (visual_width(nid, d) for nid, is_group, d in ordered if not is_group),
+        default=0,
+    )
+
     def _make_selections(head_states: dict[str, HeadCheckState]) -> list[Selection]:
-        # Pass 1: collect ordered nodes and compute max item label width.
-        ordered: list[tuple[str, bool, int]] = []
-        def collect(node_id: str, is_group: bool, depth: int) -> None:
-            ordered.append((node_id, is_group, depth))
-            for child_id, child_is_group in children_of.get(node_id, []):
-                collect(child_id, child_is_group, depth + 1)
-        for node_id, is_group in children_of[None]:
-            collect(node_id, is_group, 0)
-
-        def visual_width(node_id: str, depth: int) -> int:
-            item = next((i for i in items if i.id == node_id), None)
-            base = len("  " * depth) + len(node_id)
-            if item and (item.external or item.release_repo):
-                return base + _INDICATOR_WIDTH
-            return base
-
-        max_width = max(
-            (visual_width(nid, d) for nid, is_group, d in ordered if not is_group),
-            default=0,
-        )
-
-        # Pass 2: build Selection entries with hints aligned to a column.
         entries = []
         for node_id, is_group, depth in ordered:
             indent = "  " * depth
@@ -1120,6 +1132,10 @@ def run_selection_menu(items: list[InstallItem], groups: list[Group], hints: dic
                 current = parent_of[current]
             indent = "  " * depth
             label = f"{indent}{item_id} {head_state_label(state)}"
+            _, hint = hints.get(item_id, (None, None))
+            if hint:
+                pad = " " * (max_width - visual_width(item_id, depth) + 2)
+                label += f"{pad}[dim]{hint}[/dim]"
             sl: SelectionList = self.query_one("#menu")
             sl.replace_option_prompt(item_id, label)
 

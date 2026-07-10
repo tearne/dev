@@ -92,6 +92,27 @@ def test_helix_config_skips_equivalent_real_file(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# helix_config_link_check
+# ---------------------------------------------------------------------------
+
+def test_helix_config_link_check_healthy_after_linking(tmp_path):
+    install._link_helix_config()
+    assert install.helix_config_link_check() is True
+
+
+def test_helix_config_link_check_detects_dangling_symlink(tmp_path):
+    dst = tmp_path / ".config" / "helix" / "config.toml"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.symlink_to("/nonexistent/path")
+    assert install.helix_config_link_check() is False
+
+
+def test_helix_config_link_check_true_when_unlinked(tmp_path):
+    # no ~/.config/helix at all — nothing dangling, so not "broken"
+    assert install.helix_config_link_check() is True
+
+
+# ---------------------------------------------------------------------------
 # install_external_script
 # ---------------------------------------------------------------------------
 
@@ -734,6 +755,26 @@ def test_compute_hints_incus_not_in_container_unaffected(monkeypatch):
     selected, hint = hints["incus"]
     assert selected is True   # install_check returns False → not installed → keep selected
     assert hint is None
+
+
+def test_compute_hints_installed_item_with_healthy_link_shows_installed(monkeypatch):
+    monkeypatch.setattr(install, "in_container", lambda: False)
+    noop = lambda: None
+    item = install.InstallItem("helix", noop, install_check=lambda: True, link_check=lambda: True)
+    hints = install.compute_item_hints([item])
+    selected, hint = hints["helix"]
+    assert selected is False
+    assert hint == "installed"
+
+
+def test_compute_hints_installed_item_with_broken_link_shows_repair_hint(monkeypatch):
+    monkeypatch.setattr(install, "in_container", lambda: False)
+    noop = lambda: None
+    item = install.InstallItem("helix", noop, install_check=lambda: True, link_check=lambda: False)
+    hints = install.compute_item_hints([item])
+    selected, hint = hints["helix"]
+    assert selected is False  # broken links are surfaced, not auto-selected
+    assert hint == "config broken — reselect to repair"
 
 
 # ---------------------------------------------------------------------------
