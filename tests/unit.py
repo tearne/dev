@@ -860,16 +860,68 @@ def _make_test_tarball(path: Path, top_dir: str, binary_name: str) -> None:
         tf.addfile(b, io.BytesIO(content))
 
 
-def _stub_release(monkeypatch, tmp_path: Path, repo: str, version: str, top_dir: str, binary: str) -> Path:
+def _make_test_tarball_no_wrapper(path: Path, binary_name: str) -> None:
+    """Build a minimal tar.xz with bin/<binary_name> and lib/dep.so at archive root (no wrapper dir)."""
+    content = b"#!/bin/sh\necho ok\n"
+    with _tarfile.open(path, "w:xz") as tf:
+        for d in ("bin", "lib"):
+            di = _tarfile.TarInfo(d)
+            di.type = _tarfile.DIRTYPE
+            di.mode = 0o755
+            tf.addfile(di)
+        b = _tarfile.TarInfo(f"bin/{binary_name}")
+        b.size = len(content)
+        b.mode = 0o755
+        tf.addfile(b, io.BytesIO(content))
+        lib = _tarfile.TarInfo("lib/dep.so")
+        lib.size = len(content)
+        lib.mode = 0o644
+        tf.addfile(lib, io.BytesIO(content))
+
+
+def _make_kitty_test_tarball(path: Path) -> None:
+    """Build a minimal kitty-shaped tar.xz: bin/{kitty,kitten}, lib/dep.so, desktop file, icons — no wrapper dir."""
+    content = b"#!/bin/sh\necho ok\n"
+    with _tarfile.open(path, "w:xz") as tf:
+        def add_dir(name):
+            d = _tarfile.TarInfo(name)
+            d.type = _tarfile.DIRTYPE
+            d.mode = 0o755
+            tf.addfile(d)
+
+        def add_file(name, data=content, mode=0o755):
+            f = _tarfile.TarInfo(name)
+            f.size = len(data)
+            f.mode = mode
+            tf.addfile(f, io.BytesIO(data))
+
+        for d in ("bin", "lib", "share/applications",
+                  "share/icons/hicolor/256x256/apps", "share/icons/hicolor/scalable/apps"):
+            add_dir(d)
+        add_file("bin/kitty")
+        add_file("bin/kitten")
+        add_file("lib/dep.so", mode=0o644)
+        add_file("share/applications/kitty.desktop", data=b"[Desktop Entry]\n", mode=0o644)
+        add_file("share/icons/hicolor/256x256/apps/kitty.png", data=b"png", mode=0o644)
+        add_file("share/icons/hicolor/scalable/apps/kitty.svg", data=b"svg", mode=0o644)
+
+
+def _stub_release(monkeypatch, tmp_path: Path, repo: str, version: str, top_dir: str, binary: str,
+                   build_archive=None, suffix: str = ".tar.xz") -> Path:
     """Stub the GitHub API + curl download so install_tarball_release runs without network.
 
+    build_archive, if given, is called as build_archive(archive_path) instead of the default
+    single-wrapper-dir builder — used to exercise the no-wrapper extraction path.
     Returns the path of the prepared archive (also written by the fake `run`)."""
     archive_src = tmp_path / "_release_archive.tar.xz"
-    _make_test_tarball(archive_src, top_dir, binary)
+    if build_archive is None:
+        _make_test_tarball(archive_src, top_dir, binary)
+    else:
+        build_archive(archive_src)
     api_json = (
         f'{{"tag_name": "{version}", '
-        f'"assets": [{{"browser_download_url": "https://example.com/{top_dir}.tar.xz"}}], '
-        f'"browser_download_url": "https://example.com/{top_dir}.tar.xz"}}'
+        f'"assets": [{{"browser_download_url": "https://example.com/{top_dir}{suffix}"}}], '
+        f'"browser_download_url": "https://example.com/{top_dir}{suffix}"}}'
     )
     real_run = _sp.run
 
@@ -1087,6 +1139,140 @@ def test_install_tarball_release_does_not_touch_real_home(tmp_path, monkeypatch)
         Path.home() / ".local" / "bin" / "hx",
         install._tarball_state_dir("helix"),
     ])
+
+
+def test_install_tarball_release_substitutes_version_placeholder(tmp_path, monkeypatch):
+    _stub_release(monkeypatch, tmp_path, "acme/tool", "v1.2.3", "tool-1.2.3", "tool")
+    install.install_tarball_release(
+        name="tool",
+        repo="acme/tool",
+        asset_pattern="{version}.tar.xz",
+        binary="tool",
+    )
+    state = tmp_path / ".local" / "share" / "dev-installer" / "tarball" / "tool" / "v1.2.3"
+    assert (state / "tool").is_file()
+
+
+def test_install_tarball_release_extracts_archive_without_wrapper_directory(tmp_path, monkeypatch):
+    _stub_release(
+        monkeypatch, tmp_path, "acme/tool", "1.0.0", "tool-1.0.0", "tool",
+        build_archive=lambda p: _make_test_tarball_no_wrapper(p, "tool"),
+    )
+    install.install_tarball_release(
+        name="tool",
+        repo="acme/tool",
+        asset_pattern="{version}.tar.xz",
+        binary="bin/tool",
+    )
+    state = tmp_path / ".local" / "share" / "dev-installer" / "tarball" / "tool" / "1.0.0"
+    assert (state / "bin" / "tool").is_file()
+    assert (state / "lib" / "dep.so").is_file()
+    bin_link = tmp_path / ".local" / "bin" / "tool"
+    assert bin_link.resolve() == (state / "bin" / "tool").resolve()
+
+
+# _warn_if_dpkg_kitty_present
+
+def test_warn_if_dpkg_kitty_present_silent_when_no_system_install(monkeypatch):
+    monkeypatch.setattr(install.subprocess, "run",
+        lambda *a, **kw: _sp.CompletedProcess(a[0], 1, stdout="", stderr=""))
+    install._warn_if_dpkg_kitty_present()
+    assert not install._warnings
+
+
+def test_warn_if_dpkg_kitty_present_warns_when_dpkg_lists_kitty(monkeypatch):
+    monkeypatch.setattr(install.subprocess, "run",
+        lambda *a, **kw: _sp.CompletedProcess(a[0], 0, stdout="kitty\n", stderr=""))
+    install._warn_if_dpkg_kitty_present()
+    assert install._warnings
+    assert any("apt remove kitty" in msg for msg, _diff in install._warnings)
+
+
+# _link_kitty_desktop_icon
+
+def test_link_kitty_desktop_icon_noop_when_headless(tmp_path, monkeypatch):
+    monkeypatch.setattr(install, "detect_session_type", lambda: None)
+    target = tmp_path / "extracted"
+    (target / "share" / "applications").mkdir(parents=True)
+    (target / "share" / "applications" / "kitty.desktop").write_text("desktop entry")
+    install._link_kitty_desktop_icon(target)
+    assert not (tmp_path / ".local" / "share" / "applications" / "kitty.desktop").exists()
+
+
+def test_link_kitty_desktop_icon_symlinks_when_graphical(tmp_path, monkeypatch):
+    monkeypatch.setattr(install, "detect_session_type", lambda: "wayland")
+    target = tmp_path / "extracted"
+    (target / "share" / "applications").mkdir(parents=True)
+    (target / "share" / "applications" / "kitty.desktop").write_text("desktop entry")
+    (target / "share" / "icons" / "hicolor" / "256x256" / "apps").mkdir(parents=True)
+    (target / "share" / "icons" / "hicolor" / "256x256" / "apps" / "kitty.png").write_text("png")
+    (target / "share" / "icons" / "hicolor" / "scalable" / "apps").mkdir(parents=True)
+    (target / "share" / "icons" / "hicolor" / "scalable" / "apps" / "kitty.svg").write_text("svg")
+    install._link_kitty_desktop_icon(target)
+    desktop = tmp_path / ".local" / "share" / "applications" / "kitty.desktop"
+    assert desktop.is_symlink()
+    assert desktop.resolve() == (target / "share" / "applications" / "kitty.desktop").resolve()
+    icon = tmp_path / ".local" / "share" / "icons" / "hicolor" / "256x256" / "apps" / "kitty.png"
+    assert icon.is_symlink()
+
+
+def test_link_kitty_desktop_icon_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setattr(install, "detect_session_type", lambda: "x11")
+    target = tmp_path / "extracted"
+    (target / "share" / "applications").mkdir(parents=True)
+    (target / "share" / "applications" / "kitty.desktop").write_text("desktop entry")
+    (target / "share" / "icons" / "hicolor" / "256x256" / "apps").mkdir(parents=True)
+    (target / "share" / "icons" / "hicolor" / "256x256" / "apps" / "kitty.png").write_text("png")
+    (target / "share" / "icons" / "hicolor" / "scalable" / "apps").mkdir(parents=True)
+    (target / "share" / "icons" / "hicolor" / "scalable" / "apps" / "kitty.svg").write_text("svg")
+    install._link_kitty_desktop_icon(target)
+    install._link_kitty_desktop_icon(target)
+    desktop = tmp_path / ".local" / "share" / "applications" / "kitty.desktop"
+    assert desktop.is_symlink()
+
+
+# install_kitty end-to-end
+
+def test_install_kitty_installs_binaries_and_desktop_icon_when_graphical(tmp_path, monkeypatch):
+    monkeypatch.setattr(install.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(install, "detect_session_type", lambda: "wayland")
+    _stub_release(
+        monkeypatch, tmp_path, "kovidgoyal/kitty", "v0.47.4", "kitty-0.47.4-x86_64", "bin/kitty",
+        build_archive=_make_kitty_test_tarball, suffix=".txz",
+    )
+    install.install_kitty()
+
+    state = tmp_path / ".local" / "share" / "dev-installer" / "tarball" / "kitty" / "v0.47.4"
+    assert (state / "bin" / "kitty").is_file()
+    assert (state / "bin" / "kitten").is_file()
+    assert (tmp_path / ".local" / "bin" / "kitty").is_symlink()
+    assert (tmp_path / ".local" / "bin" / "kitten").is_symlink()
+    assert (tmp_path / ".local" / "share" / "applications" / "kitty.desktop").is_symlink()
+    assert (tmp_path / ".local" / "share" / "icons" / "hicolor" / "256x256" / "apps" / "kitty.png").is_symlink()
+
+
+def test_install_kitty_skips_desktop_icon_when_headless(tmp_path, monkeypatch):
+    monkeypatch.setattr(install.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(install, "detect_session_type", lambda: None)
+    _stub_release(
+        monkeypatch, tmp_path, "kovidgoyal/kitty", "v0.47.4", "kitty-0.47.4-x86_64", "bin/kitty",
+        build_archive=_make_kitty_test_tarball, suffix=".txz",
+    )
+    install.install_kitty()
+
+    assert (tmp_path / ".local" / "bin" / "kitty").is_symlink()
+    assert not (tmp_path / ".local" / "share" / "applications" / "kitty.desktop").exists()
+
+
+def test_install_kitty_resolves_arm64_asset_name_from_aarch64_machine(tmp_path, monkeypatch):
+    monkeypatch.setattr(install.platform, "machine", lambda: "aarch64")
+    monkeypatch.setattr(install, "detect_session_type", lambda: None)
+    _stub_release(
+        monkeypatch, tmp_path, "kovidgoyal/kitty", "v0.47.4", "kitty-0.47.4-arm64", "bin/kitty",
+        build_archive=_make_kitty_test_tarball, suffix=".txz",
+    )
+    install.install_kitty()
+    assert (tmp_path / ".local" / "bin" / "kitty").is_symlink()
 
 
 if __name__ == "__main__":

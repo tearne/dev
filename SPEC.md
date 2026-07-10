@@ -42,6 +42,7 @@ All latest stable versions. Items are organised into a visual tree in the TUI. E
   unattended-upgrades
     all-upgrades — extends automatic updates to all apt repositories (not just security)
   incus, zellij
+  kitty (kitten) — terminal emulator; desktop icon linked when a graphical session is detected
   tok [ext] — fetched from external repository at pinned version
 [Rust]
   rust (rustup/rustc/cargo)
@@ -143,7 +144,8 @@ If `git-config` is in the final selection and either `user.name` or `user.email`
     (`git-delta`), `difft` (`difftastic`), `harper-ls`
   - **fetch + `cargo build --release` + symlink**: `grit` (pinned SHA from `external_scripts.toml`; not on crates.io)
   - **GitHub releases**: `helix` (latest stable `tar.xz`; arch-appropriate: `aarch64-linux` or `x86_64-linux`; extracted to `~/.local/share/dev-installer/tarball/helix/<version>/`, with `hx` symlinked into `~/.local/bin/`); `biome`
-    (arch-appropriate binary → `~/.local/bin/`); `marksman` (arch-appropriate binary → `~/.local/bin/`)
+    (arch-appropriate binary → `~/.local/bin/`); `marksman` (arch-appropriate binary → `~/.local/bin/`); `kitty`
+    (latest stable `.txz`; arch-appropriate: `arm64` or `x86_64`; extracted to `~/.local/share/dev-installer/tarball/kitty/<version>/`, with `kitty` and `kitten` symlinked into `~/.local/bin/`; `.desktop` file and hicolor icons symlinked into `~/.local/share/applications/` and `~/.local/share/icons/hicolor/` when a graphical session is detected)
   - **`uv tool install`**: `pyright`, `ruff`
 - `install_rust()` unconditionally adds `~/.cargo/bin` to the process PATH, regardless of whether rust was already installed. `ensure_cargo_binstall()` calls `install_rust()` before checking or installing `cargo-binstall`, making it the primary enforcement point that guarantees `cargo` is on PATH before any `cargo binstall` invocation.
 - Git configured via `git config --global` for `delta` (`alias.dd`,

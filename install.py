@@ -26,7 +26,7 @@ from pathlib import Path
 from contextlib import contextmanager
 from typing import Callable
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 # ---------------------------------------------------------------------------
 # Item model and registry
@@ -126,6 +126,7 @@ def _items() -> list[InstallItem]:
         InstallItem("all-upgrades",        install_all_upgrades,        parent="unattended-upgrades", requires=["unattended-upgrades"], install_check=path_exists("/etc/apt/apt.conf.d/99unattended-upgrades-all-origins"), uses_sudo=True),
         InstallItem("incus",               install_incus_and_init,      parent="System",   install_check="incus",         uses_sudo=True),
         InstallItem("zellij",              install_zellij,              parent="System",   requires=["cargo-binstall"], install_check="zellij"),
+        InstallItem("kitty",               install_kitty,               parent="System",   install_check="kitty",         release_repo="kovidgoyal/kitty"),
         # Rust
         InstallItem("build-essential",     install_build_essential,     parent="System",   install_check="gcc",           uses_sudo=True),
         InstallItem("rustup",              install_rust,                parent="Rust",     install_check="rustup",        requires=["build-essential"]),
@@ -492,9 +493,10 @@ def install_tarball_release(name: str, repo: str, asset_pattern: str, binary: st
     symlinked to the binary inside. Idempotent: no-op when already at the latest version.
 
     asset_pattern is a substring matched against release asset URLs; "{arch}" is
-    substituted with platform.machine() (e.g. "aarch64", "x86_64"). Both .tar.xz
-    and .tar.gz are supported transparently."""
-    pattern = asset_pattern.format(arch=platform.machine())
+    substituted with platform.machine() (e.g. "aarch64", "x86_64") and "{version}"
+    with the release tag with any leading "v" stripped. Both .tar.xz and .tar.gz
+    are supported transparently, whether or not the archive wraps its contents in
+    a single top-level directory."""
     api = subprocess.run(
         f"curl -fsSL https://api.github.com/repos/{repo}/releases/latest",
         shell=True, capture_output=True, text=True,
@@ -507,6 +509,7 @@ def install_tarball_release(name: str, repo: str, asset_pattern: str, binary: st
         log(f"FAILED: no tag_name in release metadata for {repo}")
         sys.exit(1)
     version = version_match.group(1)
+    pattern = asset_pattern.format(arch=platform.machine(), version=version.removeprefix("v"))
 
     state_dir = _tarball_state_dir(name)
     target_dir = state_dir / version
@@ -536,14 +539,17 @@ def install_tarball_release(name: str, repo: str, asset_pattern: str, binary: st
             if not members:
                 log(f"FAILED: empty archive {archive}")
                 sys.exit(1)
-            top = members[0].name.split("/", 1)[0]
-            prefix = f"{top}/"
-            for m in members:
-                if m.name == top:
-                    continue
-                if m.name.startswith(prefix):
-                    m.name = m.name[len(prefix):]
-                    tf.extract(m, target_dir, filter="data")
+            tops = {m.name.split("/", 1)[0] for m in members}
+            if len(tops) == 1:
+                prefix = f"{next(iter(tops))}/"
+                for m in members:
+                    if m.name == prefix.rstrip("/"):
+                        continue
+                    if m.name.startswith(prefix):
+                        m.name = m.name[len(prefix):]
+                        tf.extract(m, target_dir, filter="data")
+            else:
+                tf.extractall(target_dir, filter="data")
         archive.unlink()
 
     _link_tarball_binary(target_dir, binary)
@@ -565,6 +571,51 @@ def _link_tarball_binary(target_dir: Path, binary: str) -> None:
             return
         dst.unlink()
     dst.symlink_to(src)
+
+
+def install_kitty():
+    with task("kitty terminal"):
+        _warn_if_dpkg_kitty_present()
+        arch = "arm64" if platform.machine() == "aarch64" else "x86_64"
+        pattern = f"kitty-{{version}}-{arch}.txz"
+        install_tarball_release(name="kitty", repo="kovidgoyal/kitty", asset_pattern=pattern, binary="bin/kitty")
+        install_tarball_release(name="kitty", repo="kovidgoyal/kitty", asset_pattern=pattern, binary="bin/kitten")
+        target_dir = _tarball_state_dir("kitty") / installed_tarball_version("kitty")
+        _link_kitty_desktop_icon(target_dir)
+
+
+def _warn_if_dpkg_kitty_present() -> None:
+    result = subprocess.run(
+        "dpkg -l kitty 2>/dev/null | awk '/^ii/ {print $2}'",
+        shell=True, capture_output=True, text=True,
+    )
+    if result.stdout.strip() == "kitty":
+        warn(
+            "system kitty detected (installed via apt). "
+            "~/.local/bin/kitty will shadow it on PATH; consider 'sudo apt remove kitty'."
+        )
+
+
+def _link_kitty_desktop_icon(target_dir: Path) -> None:
+    if detect_session_type() is None:
+        return
+    pairs = [
+        (target_dir / "share" / "applications" / "kitty.desktop",
+         Path.home() / ".local" / "share" / "applications" / "kitty.desktop"),
+        (target_dir / "share" / "icons" / "hicolor" / "256x256" / "apps" / "kitty.png",
+         Path.home() / ".local" / "share" / "icons" / "hicolor" / "256x256" / "apps" / "kitty.png"),
+        (target_dir / "share" / "icons" / "hicolor" / "scalable" / "apps" / "kitty.svg",
+         Path.home() / ".local" / "share" / "icons" / "hicolor" / "scalable" / "apps" / "kitty.svg"),
+    ]
+    with task("kitty desktop icon"):
+        for src, dst in pairs:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if dst.is_symlink() or dst.exists():
+                if dst.is_symlink() and dst.resolve() == src.resolve():
+                    continue
+                dst.unlink()
+            dst.symlink_to(src)
+        log("desktop icon linked")
 
 
 def install_helix():
